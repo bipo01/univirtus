@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "AVA Downloader",
+  "short_name": "AVA Downloader",
+  "description": "Baixe de uma vez as videoaulas e materiais do AVA Univirtus, organizados por curso, disciplina e aula. Extensão não oficial.",
+  "version": "1.0.0",
+  "minimum_chrome_version": "116",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "action": {
+    "default_title": "Baixar minhas aulas",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": ["scripting", "storage", "power"],
+  "host_permissions": [
+    "https://univirtus.uninter.com/*",
+    "https://vod.grupouninter.com.br/*",
+    "https://aud.grupouninter.com.br/*",
+    "https://univirtuscdn.uninter.com/*"
+  ],
+  "content_scripts": [
+    {
+      "matches": ["https://univirtus.uninter.com/ava/*"],
+      "js": ["content/content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

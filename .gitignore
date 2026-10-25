@@ -1,0 +1,5 @@
+.DS_Store
+node_modules/
+tools/preview/out/
+*.zip
+.claude/settings.local.json
