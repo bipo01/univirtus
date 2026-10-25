@@ -539,6 +539,56 @@ select:focus-visible {
   box-shadow: var(--shadow-sm), 0 0 0 1px var(--line);
 }
 
+.seg.radio {
+  margin: 0;
+  min-width: 0;
+}
+.seg.radio label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  border-radius: 9px;
+  color: var(--text-2);
+  font-weight: 600;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.seg.radio input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+.seg.radio label:has(input:checked) {
+  background: var(--surface);
+  color: var(--brand-ink);
+  box-shadow: var(--shadow-sm), 0 0 0 1px color-mix(in srgb, var(--brand) 40%, transparent);
+}
+.seg.radio label:has(input:focus-visible) {
+  box-shadow: 0 0 0 4px var(--brand-ring);
+}
+.seg.radio .n {
+  color: var(--text-3);
+  font-weight: 500;
+  margin-left: 2px;
+}
+.types-hint {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -6px 0 0;
+  color: var(--text-3);
+  font-size: 12.5px;
+}
+.types-hint b {
+  color: var(--text-2);
+  font-weight: 600;
+}
+.leaf.completo-leaf .glyph {
+  color: var(--brand);
+}
 .types {
   display: flex;
   align-items: center;

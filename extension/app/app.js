@@ -2,7 +2,7 @@ import { audioUrlFor, librasUrlFor, loadCatalog, STATUS_LABEL } from './lib/cata
 import { describeError, DirectoryTarget, DownloadJob, FOLDER_NAME, INDEX_FILE, probeSize, ZipTarget } from './lib/downloader.js';
 import { icon } from './lib/icons.js';
 import { fold, prettyCase, safeName } from './lib/naming.js';
-import { buildPlan, DEFAULT_TYPES, gruposDe, summarize } from './lib/plan.js';
+import { buildPlan, DEFAULT_TYPES, gruposDe, summarize, usaCompleta, usaTemas } from './lib/plan.js';
 import { formatBytes, formatDuration, plural, pool, sleep } from './lib/util.js';
 import { downloadYouTube, resolveYouTube } from './lib/youtube.js';
 import { ensureYouTubeRule } from './lib/yt-rule.js';
@@ -53,6 +53,9 @@ const prefs = { types: { ...DEFAULT_TYPES }, format: 'zip', concurrency: 4, stat
 async function loadPrefs() {
   const { prefs: saved } = await chrome.storage.local.get('prefs');
   if (saved) Object.assign(prefs, saved, { types: { ...DEFAULT_TYPES, ...(saved.types || {}) } });
+  // "Por tema" e "Aula completa" são exclusivos (o mesmo conteúdo em dois formatos).
+  if (prefs.types.completo) prefs.types.video = false;
+  else prefs.types.video = true;
 }
 const savePrefs = () => chrome.storage.local.set({ prefs });
 
@@ -429,6 +432,7 @@ function indexCatalog(catalog) {
       for (const g of gruposDe(disc)) {
         const label = g.nome || g.rotulo;
         const gn = add({ type: 'grupo', key: g.key, data: g, children: [], parent: dn, label });
+        g.completos.forEach((c) => gn.children.push(add({ type: 'completo', key: c.key, data: c, children: [], parent: gn, label: g.completos.length > 1 && c.titulo ? `Aula completa – ${c.titulo}` : 'Aula completa (vídeo único)', leaf: true })));
         for (const v of g.videos) gn.children.push(add({ type: 'video', key: v.key, data: v, children: [], parent: gn, label: v.titulo, leaf: true }));
         for (const m of g.materiais) gn.children.push(add({ type: 'material', key: m.key, data: m, children: [], parent: gn, label: m.nomeArquivo || m.titulo, leaf: true }));
         for (const x of g.externos || []) gn.children.push(add({ type: 'youtube', key: x.key, data: x, children: [], parent: gn, label: x.titulo, leaf: true }));
@@ -444,19 +448,24 @@ function indexCatalog(catalog) {
 }
 
 const t = () => prefs.types;
-const videoEnabled = () => t().video || t().audio || t().libras || t().completo;
+/** Tema ou aula completa vale para o modo escolhido? (os outros ficam escondidos) */
+const leafActive = (n) => {
+  if (n.type === 'video') return usaTemas(n.parent.data, t());
+  if (n.type === 'completo') return usaCompleta(n.parent.data, t());
+  return true;
+};
 const leafEnabled = (n) => {
   if (n.type === 'material') return t().materiais;
   if (n.type === 'youtube') return t().youtube && !ytInfo.get(n.data.videoId)?.permanent;
-  return videoEnabled();
+  return leafActive(n);
 };
 
 /** URLs que uma folha gera com os tipos atuais. */
 function outputsOf(n) {
   if (n.type === 'youtube') return []; // estimativa à parte (ytInfo)
   if (n.type === 'material') return t().materiais && n.data.url ? [n.data.url] : [];
-  const out = [];
-  if (t().video) out.push(n.data.url);
+  if (!leafActive(n)) return [];
+  const out = [n.data.url];
   if (t().audio) out.push(audioUrlFor(n.data.url));
   if (t().libras) {
     const l = librasUrlFor(n.data.url);
@@ -483,10 +492,6 @@ function sizeOfNode(n) {
         approx = true;
       } else if (!info) unknown += 1;
     }
-  }
-  if (t().completo) {
-    const grupos = n.type === 'grupo' ? [n] : n.type === 'disc' ? n.children : n.type === 'curso' ? n.children.flatMap((d) => d.children) : [];
-    for (const g of grupos) g.data.completos.forEach((c) => count(c.url));
   }
   return { total, unknown, approx };
 }
@@ -559,14 +564,12 @@ function highlight(text) {
 
 // ---------------------------------------------------------------- Tela de seleção
 const KIND_CHIPS = [
-  { key: 'video', label: 'Vídeos das aulas', icon: 'video', title: 'Os vídeos de cada aula, um arquivo por tema (Conversa inicial, Tema 1, Tema 2…)' },
   { key: 'materiais', label: 'PDFs e materiais', icon: 'file', title: 'PDFs, apostilas e arquivos das aulas e do material complementar' },
   { key: 'youtube', label: 'Vídeos do YouTube', icon: 'youtube', title: 'Vídeos do YouTube que aparecem nas aulas, baixados em MP4 até 1080p' },
 ];
 
 /** Opções que ficam em "Mais opções" (para quem quer algo além do padrão). */
 const EXTRA_TYPES = [
-  { key: 'completo', label: 'Aula inteira num vídeo só' },
   { key: 'audio', label: 'Áudio em MP3' },
   { key: 'libras', label: 'Vídeos em Libras' },
 ];
@@ -578,7 +581,7 @@ function chipCount(key) {
   if (key === 'audio') return videos.filter((v) => audioUrlFor(v.data.url)).length;
   if (key === 'materiais') return leaves.filter((n) => n.type === 'material').length;
   if (key === 'youtube') return leaves.filter((n) => n.type === 'youtube').length;
-  if (key === 'completo') return [...state.nodes.values()].filter((n) => n.type === 'grupo').reduce((s, g) => s + g.data.completos.length, 0);
+  if (key === 'completo') return leaves.filter((n) => n.type === 'completo').length;
   if (key === 'libras') {
     const urls = videos.map((v) => librasUrlFor(v.data.url)).filter(Boolean);
     if (!t().libras) return urls.length ? null : 0;
@@ -617,9 +620,14 @@ function renderSelect() {
       </div>
       <div class="types" role="group" aria-label="Tipos de conteúdo">
         <span>Incluir</span>
+        <fieldset class="seg radio" aria-label="Formato dos vídeos da Uninter">
+          <label title="Um vídeo para cada assunto da aula: Conversa inicial, Tema 1, Tema 2… Finalizando"><input type="radio" name="vmode" value="tema" ${t().completo ? '' : 'checked'} />${icon('layers', 16)}Vídeos por tema<span class="n" data-count="video"></span></label>
+          <label title="A aula inteira num vídeo só (o mesmo conteúdo dos vídeos por tema)"><input type="radio" name="vmode" value="completo" ${t().completo ? 'checked' : ''} />${icon('video', 16)}Aula completa<span class="n" data-count="completo"></span></label>
+        </fieldset>
         ${KIND_CHIPS.map((c) => `<button type="button" class="chip" data-type="${c.key}" aria-pressed="${!!t()[c.key]}" title="${esc(c.title)}"><span class="box">${icon('check', 12)}</span>${icon(c.icon, 16)}${c.label}<span class="n" data-count="${c.key}"></span></button>`).join('')}
         <button type="button" class="btn ghost sm more-opts" id="more-opts">${icon('settings', 15)}<span id="more-label"></span></button>
       </div>
+      <p class="types-hint">${icon('info', 14)}<span>Os dois formatos têm o <b>mesmo conteúdo</b>. <b>Por tema</b>: um vídeo curto para cada assunto. <b>Aula completa</b>: a aula inteira num vídeo só.</span></p>
     </div>
     <div class="sheet-body" id="tree-wrap">
       <div class="list-actions">
@@ -698,7 +706,7 @@ function nodeRow(n) {
   const sub = isExt
     ? `<span class="sub">Vídeo do YouTube · <a href="${esc(n.data.url)}" target="_blank" rel="noopener">assistir online ↗</a></span>`
     : isMat && n.data.nomeArquivo && n.data.titulo && fold(n.data.titulo) !== fold(n.data.nomeArquivo.replace(/\.[^.]+$/, '')) ? `<span class="sub">${esc(n.data.titulo)}</span>` : '';
-  const glyph = isExt ? icon('youtube', 16) : icon(isMat ? 'file' : 'play', isMat ? 16 : 14);
+  const glyph = isExt ? icon('youtube', 16) : n.type === 'completo' ? icon('video', 15) : icon(isMat ? 'file' : 'play', isMat ? 16 : 14);
   return `<li class="node leaf ${isMat ? 'material' : isExt ? 'youtube' : 'video'}" data-key="${esc(n.key)}">
     <div class="row">
       <input class="cb" type="checkbox" id="${id}" />
@@ -815,6 +823,15 @@ function bindSelect() {
       sync();
     };
   }
+  for (const r of $$('input[name="vmode"]')) {
+    r.onchange = () => {
+      t().completo = r.value === 'completo';
+      t().video = !t().completo;
+      savePrefs();
+      probeForTypes();
+      sync();
+    };
+  }
   for (const b of $$('[data-type]')) {
     b.onclick = () => {
       const k = b.dataset.type;
@@ -927,9 +944,13 @@ function sync() {
       if (yt?.error) {
         sizeEl.textContent = yt.permanent ? 'indisponível' : '—';
         sizeEl.title = yt.error;
+      } else if (n.type === 'video' || n.type === 'completo' || n.type === 'material') {
+        // Cada arquivo mostra o próprio tamanho, mesmo desmarcado.
+        const own = sizes.sizeOf(n.data.url);
+        sizeEl.textContent = own != null ? formatBytes(own) : sizes.missing(n.data.url) ? 'indisponível' : '…';
       } else sizeEl.textContent = sz.total ? formatBytes(sz.total, { approx: sz.unknown > 0 || sz.approx }) : sz.unknown ? '…' : '—';
     }
-    let visible = !hits || hits.has(key);
+    let visible = (!hits || hits.has(key)) && !((n.type === 'video' || n.type === 'completo') && !leafActive(n));
     if (n.type === 'disc') {
       visible = visible && discVisibleByStatus(n);
       if (visible) visibleDiscs += 1;
@@ -949,10 +970,10 @@ function sync() {
   }
 
   // Chips
-  for (const c of KIND_CHIPS) {
-    const el = $(`[data-count="${c.key}"]`);
+  for (const key of ['video', 'completo', ...KIND_CHIPS.map((c) => c.key)]) {
+    const el = $(`[data-count="${key}"]`);
     if (!el) continue;
-    const v = chipCount(c.key);
+    const v = chipCount(key);
     el.innerHTML = v === 'checking' ? '<span class="spinner" style="width:12px;height:12px;display:inline-block;vertical-align:-2px"></span>' : v == null ? '' : String(v);
   }
 
@@ -1033,7 +1054,6 @@ async function probeForTypes() {
     if (t().audio) urls.push(audioUrlFor(n.data.url));
     if (t().libras) urls.push(librasUrlFor(n.data.url));
   }
-  if (t().completo) for (const n of state.nodes.values()) if (n.type === 'grupo') n.data.completos.forEach((c) => urls.push(c.url));
   try {
     await Promise.all([
       sizes.ensure(urls, () => scheduleSync()),
@@ -1051,7 +1071,7 @@ function suggestedZipName() {
   const plan = currentPlan();
   const discs = [...new Set(plan.entries.map((e) => e.disciplina))];
   const date = new Date().toLocaleDateString('pt-BR').replace(/\//g, '-');
-  if (discs.length === 1) return `${safeName(discs[0], 80)}.zip`;
+  if (discs.length === 1) return `${safeName(discs[0], 40)}.zip`; // curto: o Windows extrai numa pasta com este nome
   return `Aulas Uninter ${date}.zip`;
 }
 
@@ -1094,7 +1114,7 @@ async function runDownload({ handle, format, onlyEntries = null }) {
       entries = onlyEntries.filter((e) => e.kind === 'youtube' || !sizes.missing(e.url)).map((e) => (e.kind === 'youtube' ? { ...e } : { ...e, size: sizes.sizeOf(e.url) }));
     } else {
       if (t().libras) {
-        const libras = [...state.selected].map((k) => state.nodes.get(k)).filter((n) => n?.type === 'video').map((n) => librasUrlFor(n.data.url));
+        const libras = [...state.selected].map((k) => state.nodes.get(k)).filter((n) => n && (n.type === 'video' || n.type === 'completo') && leafActive(n)).map((n) => librasUrlFor(n.data.url));
         await sizes.ensure(libras, (d, total) => setPrepText(`Verificando vídeos em Libras… ${d} de ${total}`));
       }
       let plan = currentPlan();

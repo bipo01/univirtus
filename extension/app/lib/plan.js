@@ -24,10 +24,16 @@ export const DEFAULT_TYPES = Object.freeze({
 
 
 
-export function aulaFolderName(aula) {
-  if (!aula.ordem && !aula.nome) return safeName(aula.rotulo);
+// Windows (Explorador, ZIP) não aceita caminhos com mais de 260 caracteres. Orçamento do caminho
+// relativo: Curso/Disciplina/Aula ≤ 110 + subpasta (Áudio, Materiais…) ≤ 10 + arquivo ≤ 64 ≈ 190,
+// sobrando ~70 para a pasta escolhida (ex.: C:\Users\Nome\Downloads\Aulas Uninter\).
+export const LIMITS = Object.freeze({ curso: 36, disciplina: 44, pastas: 110, arquivo: 64, relativo: 190 });
+const FILE_MAX = LIMITS.arquivo;
+
+export function aulaFolderName(aula, max = 100) {
+  if (!aula.ordem && !aula.nome) return safeName(aula.rotulo, max);
   const head = `${aula.rotulo} ${pad(aula.ordem || 0)}`;
-  return safeName(aula.nome ? `${head} - ${aula.nome}` : head, 100);
+  return safeName(aula.nome ? `${head} - ${aula.nome}` : head, Math.max(head.length, max));
 }
 
 function extFromUrl(url, fallback) {
@@ -41,13 +47,20 @@ function extFromUrl(url, fallback) {
 
 export function materialFileName(m) {
   const titulo = m.titulo || 'Arquivo';
-  if (!m.nomeArquivo) return safeFileName(titulo, 'pdf');
+  if (!m.nomeArquivo) return safeFileName(titulo, 'pdf', FILE_MAX);
   const [base, ext] = splitExt(m.nomeArquivo);
   const b = fold(base).replace(/[^a-z0-9]+/g, ' ').trim();
   const t = fold(titulo).replace(/[^a-z0-9]+/g, ' ').trim();
   const name = !t || b.includes(t) || t === 'arquivo' ? base : `${titulo} - ${base}`;
-  return safeFileName(name, ext || 'pdf');
+  return safeFileName(name, ext || 'pdf', FILE_MAX);
 }
+
+/**
+ * Vídeos da Uninter: "por tema" (um arquivo por assunto) OU "aula completa" (um arquivo por aula),
+ * que são o mesmo conteúdo. Aula sem versão completa usa os temas, para não ficar sem vídeo.
+ */
+export const usaTemas = (grupo, types) => Boolean(types.video || (types.completo && !grupo.completos.length));
+export const usaCompleta = (grupo, types) => Boolean(types.completo && grupo.completos.length);
 
 /** Grupos de conteúdo de uma disciplina: as aulas e, se existir, o material complementar. */
 export function gruposDe(disc) {
@@ -58,7 +71,7 @@ export function gruposDe(disc) {
 export function leafKeys(node) {
   if (node.disciplinas) return node.disciplinas.flatMap(leafKeys);
   if (node.aulas) return gruposDe(node).flatMap(leafKeys);
-  return [...node.videos.map((v) => v.key), ...node.materiais.map((m) => m.key), ...(node.externos || []).map((x) => x.key)];
+  return [...(node.completos || []).map((c) => c.key), ...node.videos.map((v) => v.key), ...node.materiais.map((m) => m.key), ...(node.externos || []).map((x) => x.key)];
 }
 
 /**
@@ -70,17 +83,19 @@ export function folderNames(catalog) {
   const cursos = createUniquer();
   const seen = new Set();
   for (const curso of catalog.cursos) {
-    let base = safeName(prettyCase(curso.nome), 80);
-    if (seen.has(base.toLowerCase()) && curso.encerrado) base = safeName(`${base} (encerrado)`, 90);
+    let base = safeName(prettyCase(curso.nome), LIMITS.curso);
+    if (seen.has(base.toLowerCase()) && curso.encerrado) base = `${safeName(base, LIMITS.curso - 12)} (encerrado)`;
     seen.add(base.toLowerCase());
     const cursoDir = cursos(base);
     dirs.set(curso.key, cursoDir);
     const discs = createUniquer();
     for (const disc of curso.disciplinas) {
-      const discDir = discs(`${cursoDir}/${safeName(disc.nome, 80)}`);
+      const discDir = discs(`${cursoDir}/${safeName(disc.nome, LIMITS.disciplina)}`);
       dirs.set(disc.key, discDir);
       const grupos = createUniquer();
-      for (const g of gruposDe(disc)) dirs.set(g.key, grupos(`${discDir}/${aulaFolderName(g)}`));
+      // A aula fica com o que sobra do orçamento (no mínimo 30 caracteres).
+      const aulaMax = Math.max(30, LIMITS.pastas - discDir.length - 1);
+      for (const g of gruposDe(disc)) dirs.set(g.key, grupos(`${discDir}/${aulaFolderName(g, aulaMax)}`));
     }
   }
   return dirs;
@@ -116,34 +131,36 @@ export function buildPlan(catalog, { selected, types = DEFAULT_TYPES, libras = n
       const discIndex = { nome: disc.nome, grupos: [] };
 
       for (const grupo of gruposDe(disc)) {
-        const videos = grupo.videos.filter((v) => selected.has(v.key));
+        const videos = usaTemas(grupo, types) ? grupo.videos.filter((v) => selected.has(v.key)) : [];
         const materiais = types.materiais ? grupo.materiais.filter((m) => selected.has(m.key)) : [];
         const ext = types.youtube ? (grupo.externos || []).filter((x) => selected.has(x.key)) : [];
-        if (!videos.length && !materiais.length && !ext.length) continue;
+        const completos = usaCompleta(grupo, types) ? grupo.completos.filter((c) => selected.has(c.key)) : [];
+        if (!videos.length && !materiais.length && !ext.length && !completos.length) continue;
 
         const grupoLabel = grupo.nome ? `${grupo.rotulo} ${grupo.ordem} – ${grupo.nome}` : grupo.rotulo;
         const dir = dirs.get(grupo.key);
         const meta = { curso: cursoIndex.nome, disciplina: disc.nome, aula: grupoLabel };
         const grupoIndex = { nome: grupoLabel, dir, itens: [], links: grupo.links };
 
-        if (types.completo && videos.length) {
-          const varias = grupo.completos.length > 1;
-          grupo.completos.forEach((c, i) => {
-            const titulo = varias ? `Aula completa - ${c.titulo || i + 1}` : 'Aula completa';
-            grupoIndex.itens.push(add(`${dir}/${safeFileName(`00 - ${titulo}`, extFromUrl(c.url, 'mp4'))}`, c.url, 'completo', { ...meta, titulo }));
-          });
-        }
+        // Vídeo + (opcional) MP3 e Libras do mesmo vídeo.
+        const media = (url, base, kind, vmeta) => {
+          grupoIndex.itens.push(add(`${dir}/${safeFileName(base, extFromUrl(url, 'mp4'), FILE_MAX)}`, url, kind, vmeta));
+          const a = types.audio ? audioUrlFor(url) : null;
+          if (a) grupoIndex.itens.push(add(`${dir}/Áudio/${safeFileName(base, 'mp3', FILE_MAX)}`, a, 'audio', vmeta));
+          const l = types.libras ? librasUrlFor(url) : null;
+          if (l && libras.get(l) === true) grupoIndex.itens.push(add(`${dir}/Libras/${safeFileName(base, 'mp4', FILE_MAX)}`, l, 'libras', vmeta));
+        };
+
+        const varias = grupo.completos.length > 1;
+        grupo.completos.forEach((c, i) => {
+          if (!completos.includes(c)) return;
+          const titulo = varias ? `Aula completa - ${c.titulo || i + 1}` : 'Aula completa';
+          media(c.url, `00 - ${titulo}`, 'completo', { ...meta, titulo });
+        });
 
         grupo.videos.forEach((v, i) => {
-          if (!selected.has(v.key)) return;
-          const n = pad(i + 1);
-          const base = `${n} - ${v.titulo}`;
-          const vmeta = { ...meta, titulo: v.titulo };
-          if (types.video) grupoIndex.itens.push(add(`${dir}/${safeFileName(base, extFromUrl(v.url, 'mp4'))}`, v.url, 'video', vmeta));
-          const a = types.audio ? audioUrlFor(v.url) : null;
-          if (a) grupoIndex.itens.push(add(`${dir}/Áudio/${safeFileName(base, 'mp3')}`, a, 'audio', vmeta));
-          const l = types.libras ? librasUrlFor(v.url) : null;
-          if (l && libras.get(l) === true) grupoIndex.itens.push(add(`${dir}/Libras/${safeFileName(base, 'mp4')}`, l, 'libras', vmeta));
+          if (!videos.includes(v)) return;
+          media(v.url, `${pad(i + 1)} - ${v.titulo}`, 'video', { ...meta, titulo: v.titulo });
         });
 
         // No material complementar os arquivos ficam direto na pasta; nas aulas, em "Materiais/".
@@ -154,7 +171,7 @@ export function buildPlan(catalog, { selected, types = DEFAULT_TYPES, libras = n
         }
         // YouTube: a extensão baixa e remonta num MP4 (youtube.js); o tamanho só se sabe no fim.
         for (const x of ext) {
-          grupoIndex.itens.push(add(`${dir}/${safeFileName(`YouTube - ${x.titulo}`, 'mp4')}`, x.url, 'youtube', { ...meta, titulo: x.titulo, videoId: x.videoId }));
+          grupoIndex.itens.push(add(`${dir}/${safeFileName(`YouTube - ${x.titulo}`, 'mp4', FILE_MAX)}`, x.url, 'youtube', { ...meta, titulo: x.titulo, videoId: x.videoId }));
         }
         if (grupoIndex.itens.length) discIndex.grupos.push(grupoIndex);
       }

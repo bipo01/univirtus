@@ -20,8 +20,8 @@ export function safeName(input, max = 90) {
   return s;
 }
 
-/** Igual a safeName, mas preserva a extensão (".mp4", ".pdf"...). */
-export function safeFileName(base, ext, max = 110) {
+/** Igual a safeName, mas preserva a extensão (".mp4", ".pdf"...). O limite cabe no orçamento do Windows (plan.js). */
+export function safeFileName(base, ext, max = 64) {
   const e = ext ? `.${String(ext).replace(/^\.+/, '').toLowerCase()}` : '';
   return safeName(base, Math.max(10, max - e.length)) + e;
 }

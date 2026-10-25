@@ -49,12 +49,12 @@ Pronto. Não apague nem mova a pasta depois de instalar: o Chrome usa a extensã
 1. Abra o **AVA** e entre com seu RU e senha, como sempre.
 2. Clique no botão **Baixar aulas** (canto inferior direito do AVA) ou no ícone da extensão.
 3. Tudo já vem marcado. Desmarque o que não quiser, ou use a busca para achar uma aula ou tema.
-4. Em **Incluir**, deixe marcado o que quer (tudo já vem marcado):
-   - **Vídeos das aulas**: os vídeos de cada aula, um arquivo por tema.
+4. Em **Incluir**, escolha o formato dos vídeos e o que mais quer:
+   - **Vídeos por tema** *ou* **Aula completa**: é o mesmo conteúdo em dois formatos. Por tema = um vídeo curto para cada assunto (Conversa inicial, Tema 1… Finalizando). Aula completa = a aula inteira num vídeo só. Escolha um; o tamanho total é praticamente o mesmo.
    - **PDFs e materiais**: apostilas, roteiros e arquivos das aulas.
    - **Vídeos do YouTube**: vídeos do YouTube que aparecem nas aulas, baixados em MP4.
 
-   Em **Mais opções** dá para pedir também a aula inteira num vídeo só, o áudio em MP3 e os vídeos em Libras. Se não souber, não precisa mexer.
+   Em **Mais opções** dá para pedir também o áudio em MP3 e os vídeos em Libras. Se não souber, não precisa mexer.
 5. Em **Salvar como**, escolha:
    - **ZIP**: um arquivo único, fácil de guardar ou mandar para alguém.
    - **Pasta**: melhor para downloads grandes. Se você baixar de novo na mesma pasta, ela **só baixa o que falta**. Ótimo para baixar as aulas novas no meio do semestre.
@@ -77,8 +77,11 @@ Abra o AVA e faça login. A extensão percebe sozinha e continua.
 **Alguns arquivos falharam.**
 Clique em **Tentar de novo os que falharam**. No ZIP, a lista dos que falharam fica no arquivo `LEIA-ME - arquivos com erro.txt`.
 
-**O que é “Aula inteira num vídeo só”, em Mais opções?**
-A Uninter publica cada aula de dois jeitos, com o **mesmo conteúdo**: em vários vídeos curtos, um por tema (Conversa inicial, Tema 1, Tema 2…, Finalizando), e num vídeo único com tudo. A extensão baixa os vídeos por tema, que são mais fáceis de usar. Só marque a aula inteira se preferir um arquivo único por aula: baixar os dois ocupa o dobro do espaço com o mesmo conteúdo.
+**Vídeos por tema ou Aula completa: qual escolher?**
+Tanto faz no espaço: medimos nos arquivos da Uninter e as partes somam o mesmo que a aula completa. Por tema é melhor para achar um assunto ou rever um trecho; aula completa é melhor para assistir de uma vez. Aulas que não têm a versão completa vêm por tema de qualquer jeito.
+
+**Funciona no Windows?**
+Sim, no Google Chrome ou no Microsoft Edge atualizados. Os nomes de pastas e arquivos já saem no formato que o Windows aceita (sem caracteres proibidos e curtos o bastante para o limite de caminho do Windows), os vídeos são MP4 (H.264 + AAC), que abrem no player padrão, e o ZIP abre no próprio Windows. Para ZIPs muito grandes (dezenas de GB), o [7-Zip](https://www.7-zip.org/) extrai mais rápido que o Windows.
 
 **E os vídeos do YouTube?**
 São baixados pela própria extensão, junto com o resto, em MP4 (até 1080p) que abre em qualquer player. Ficam na pasta da aula, com o nome “YouTube - título.mp4”. Se um vídeo for privado ou tiver sido removido do YouTube, ele aparece como “indisponível” e fica de fora.

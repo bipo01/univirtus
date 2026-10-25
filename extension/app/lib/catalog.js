@@ -267,7 +267,7 @@ async function collectItems(api, atividades, grupo, keyPrefix) {
   }
   grupo.videos = flat.map((v, i) => ({ ...v, key: `${keyPrefix}:v:${i}`, titulo: v.titulo || `Vídeo ${i + 1}` }));
   const vistos = new Set(seen);
-  grupo.completos = completos.filter((c) => !vistos.has(c.url) && vistos.add(c.url));
+  grupo.completos = completos.filter((c) => !vistos.has(c.url) && vistos.add(c.url)).map((c, i) => ({ ...c, key: `${keyPrefix}:c:${i}` }));
   const ext = new Set();
   grupo.externos = grupo.externos.filter((x) => !ext.has(x.videoId) && ext.add(x.videoId)).map((x, i) => ({ ...x, key: `${keyPrefix}:y:${i}` }));
 }

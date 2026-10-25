@@ -186,12 +186,11 @@ test('plano: pastas organizadas por curso/disciplina/aula, tipos e índice offli
   assert.equal(new Set(paths).size, paths.length, 'caminhos únicos');
   assert.equal(plan.entries.find((e) => e.url === rel.aulas[0].videos[0].url).size, 1234);
 
-  // Seleção parcial: só um tema → só ele (e a aula completa daquela aula).
+  // A aula completa é um item próprio: marcar um tema não traz a aula completa junto.
   const one = buildPlan(cat, { selected: new Set([rel.aulas[1].videos[2].key]), types: { ...DEFAULT_TYPES, completo: true } });
-  assert.deepEqual(
-    one.entries.map((e) => e.path.split('/').slice(-1)[0]),
-    ['00 - Aula completa.mp4', '03 - Finalizando.mp4'],
-  );
+  assert.deepEqual(one.entries.map((e) => e.path.split('/').slice(-1)[0]), ['03 - Finalizando.mp4']);
+  const so = buildPlan(cat, { selected: new Set([rel.aulas[1].completos[0].key]), types: { ...DEFAULT_TYPES, video: false, completo: true } });
+  assert.deepEqual(so.entries.map((e) => e.path.split('/').slice(-1)[0]), ['00 - Aula completa.mp4']);
 
   const html = buildOfflineIndex(plan.index);
   assert.ok(html.includes('Conversa Inicial'));
@@ -240,4 +239,57 @@ test('YouTube vira item selecionável e entra no plano como MP4 na pasta da aula
   );
   const off = buildPlan(cat, { selected: new Set([key]), types: { ...DEFAULT_TYPES, youtube: false } });
   assert.equal(off.entries.length, 0);
+});
+
+test('Windows: caminhos curtos o bastante (≤ 190) e nomes válidos, mesmo com títulos enormes', async () => {
+  const longo = 'Projeto Interdisciplinar I - Tópicos Especiais em História da Filosofia Antiga, Medieval e Moderna';
+  const aulaNome = 'ETAPA A - Projeto interdisciplinar I (Conheça os ODS) - História da Filosofia Antiga e o Pensamento Grego';
+  const cat = {
+    cursos: [
+      {
+        key: 'c:1',
+        nome: 'BACHARELADO EM FILOSOFIA - LICENCIATURA E BACHARELADO COM ÊNFASE EM ENSINO',
+        disciplinas: [
+          {
+            key: 'd:1',
+            nome: longo,
+            aulas: [
+              {
+                key: 'a:1', ordem: 1, rotulo: 'Aula', nome: aulaNome, links: [], externos: [],
+                completos: [{ key: 'c0', url: 'https://vod.grupouninter.com.br/x-A01.mp4' }],
+                videos: [{ key: 'v0', url: 'https://vod.grupouninter.com.br/x-A01-P01.mp4', titulo: 'Tema 1 – Uma introdução muito longa sobre a relação entre fé, razão e a história do pensamento ocidental' }],
+                materiais: [{ key: 'm0', url: 'https://x/y', titulo: 'Template 1: Etapa A - postagem 1 - Produto Parcial projeto interdisciplinar I Filosofia', nomeArquivo: 'Template 1 Etapa A - postagem 1 - Produto Parcial projeto interdisciplinar I Filosofia.docx' }],
+              },
+            ],
+            complementar: null,
+          },
+        ],
+      },
+    ],
+  };
+  const plan = buildPlan(cat, { selected: new Set(['c0', 'v0', 'm0']), types: { ...DEFAULT_TYPES, completo: true, audio: true } });
+  assert.ok(plan.entries.length >= 4);
+  for (const e of plan.entries) {
+    assert.ok(e.path.length <= 190, `${e.path.length}: ${e.path}`);
+    for (const part of e.path.split('/')) {
+      assert.ok(!/[<>:"\\|?*\u0000-\u001f]/.test(part), part);
+      assert.ok(!/[. ]$/.test(part), `termina com ponto/espaço: ${part}`);
+    }
+  }
+  assert.ok(plan.entries.find((e) => e.kind === 'material').path.endsWith('.docx'), 'extensão preservada');
+});
+
+test('por tema OU aula completa; aula sem versão completa continua com os temas', async () => {
+  const { api } = fakeApi();
+  const cat = await loadCatalog(api, { now: NOW });
+  const all = new Set(leafKeys(cat.cursos[0]));
+  const nomes = (types) => buildPlan(cat, { selected: all, types: { ...DEFAULT_TYPES, materiais: false, youtube: false, ...types } }).entries.map((e) => `${e.disciplina}|${e.path.split('/').pop()}`);
+  const temas = nomes({ video: true, completo: false });
+  assert.ok(temas.includes('Filosofia da Religião|01 - Conversa Inicial.mp4'));
+  assert.ok(!temas.some((n) => n.includes('Aula completa')));
+  const completa = nomes({ video: false, completo: true });
+  assert.ok(completa.includes('Filosofia da Religião|00 - Aula completa.mp4'));
+  assert.ok(!completa.includes('Filosofia da Religião|01 - Conversa Inicial.mp4'), 'sem duplicar o conteúdo');
+  // Produção Textual não tem aula completa: mantém o vídeo da aula.
+  assert.ok(completa.includes('Produção Textual|01 - Aula 1 - com legenda.mp4'));
 });
