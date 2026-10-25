@@ -147,7 +147,8 @@ test('catálogo completo: ordem das aulas, tópicos da rota, materiais, vídeos 
   assert.equal(rel.complementar.materiais[0].nomeArquivo, 'FILOSOFIA DA RELIGIAO.pdf');
   const aula = prod.aulas[0];
   assert.deepEqual(aula.videos.map((v) => v.titulo), ['Aula 1 - com legenda']);
-  assert.deepEqual(aula.links.map((l) => l.url), ['https://youtu.be/abc']);
+  assert.deepEqual(aula.links, []);
+  assert.deepEqual(aula.externos.map((x) => [x.url, x.titulo]), [['https://youtu.be/abc', 'Vídeo extra']]);
   assert.equal(aula.materiais[0].nomeArquivo, 'A estrutura do texto.pdf');
 });
 
@@ -224,4 +225,17 @@ test('disciplina de curso encerrado nunca aparece como "em andamento"', async ()
   const cat = await loadCatalog(api, { now: NOW });
   const closed = cat.cursos.find((c) => c.encerrado);
   assert.equal(closed.disciplinas[0].status, 'anterior');
+});
+
+test('YouTube vira item selecionável e entra no plano como vídeo externo, na pasta da aula', async () => {
+  const { api } = fakeApi();
+  const cat = await loadCatalog(api, { now: NOW });
+  const aula = cat.cursos[0].disciplinas[1].aulas[0];
+  const key = aula.externos[0].key;
+  assert.ok(leafKeys(cat.cursos[0]).includes(key));
+  const plan = buildPlan(cat, { selected: new Set([key]) });
+  assert.equal(plan.entries.length, 0);
+  assert.deepEqual(plan.externos.map((x) => [x.base, x.url, x.playlist]), [['Bacharelado em Filosofia/Produção Textual/Aula 01 - A argumentação/YouTube - Vídeo extra', 'https://youtu.be/abc', false]]);
+  const off = buildPlan(cat, { selected: new Set([key]), types: { ...DEFAULT_TYPES, youtube: false } });
+  assert.equal(off.externos.length, 0);
 });

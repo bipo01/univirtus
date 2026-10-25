@@ -542,7 +542,7 @@ select:focus-visible {
 .types {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 .types > span {
@@ -551,14 +551,14 @@ select:focus-visible {
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  margin-right: 4px;
+  margin-right: 2px;
 }
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   height: 36px;
-  padding: 0 14px 0 10px;
+  padding: 0 12px 0 9px;
   border-radius: 999px;
   border: 1px solid var(--line-strong);
   background: var(--surface);
@@ -573,7 +573,7 @@ select:focus-visible {
   color: var(--text);
 }
 .chip .box {
-  width: 18px;
+  width: 17px;
   height: 18px;
   border-radius: 6px;
   border: 1.5px solid var(--line-strong);
@@ -821,6 +821,20 @@ select:focus-visible {
 }
 .leaf.material .glyph {
   color: var(--amber);
+}
+.leaf.externo .glyph {
+  color: #e03131;
+}
+.tag.yt {
+  color: #e03131;
+  background: color-mix(in srgb, #e03131 10%, transparent);
+  text-decoration: none;
+}
+.notice code {
+  font: 600 12px var(--mono);
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
 }
 .meta {
   display: flex;

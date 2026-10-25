@@ -372,6 +372,7 @@ function indexCatalog(catalog) {
         const gn = add({ type: 'grupo', key: g.key, data: g, children: [], parent: dn, label });
         for (const v of g.videos) gn.children.push(add({ type: 'video', key: v.key, data: v, children: [], parent: gn, label: v.titulo, leaf: true }));
         for (const m of g.materiais) gn.children.push(add({ type: 'material', key: m.key, data: m, children: [], parent: gn, label: m.nomeArquivo || m.titulo, leaf: true }));
+        for (const x of g.externos || []) gn.children.push(add({ type: 'externo', key: x.key, data: x, children: [], parent: gn, label: x.titulo, leaf: true }));
         if (gn.children.length || g.links.length || g.avisos.length || g.error) dn.children.push(gn);
       }
       cn.children.push(dn);
@@ -385,10 +386,11 @@ function indexCatalog(catalog) {
 
 const t = () => prefs.types;
 const videoEnabled = () => t().video || t().audio || t().libras || t().completo;
-const leafEnabled = (n) => (n.type === 'material' ? t().materiais : videoEnabled());
+const leafEnabled = (n) => (n.type === 'material' ? t().materiais : n.type === 'externo' ? t().youtube : videoEnabled());
 
 /** URLs que uma folha gera com os tipos atuais. */
 function outputsOf(n) {
+  if (n.type === 'externo') return []; // tamanho só se sabe no yt-dlp
   if (n.type === 'material') return t().materiais && n.data.url ? [n.data.url] : [];
   const out = [];
   if (t().video) out.push(n.data.url);
@@ -489,6 +491,7 @@ const KIND_CHIPS = [
   { key: 'audio', label: 'Áudio MP3', icon: 'headphones', title: 'Áudio dos vídeos em MP3, ótimo para ouvir no celular' },
   { key: 'libras', label: 'Libras', icon: 'hand', title: 'Vídeos com intérprete de Libras, quando a aula tiver' },
   { key: 'materiais', label: 'Materiais', icon: 'file', title: 'PDFs, apostilas e arquivos das aulas e do material complementar' },
+  { key: 'youtube', label: 'YouTube', icon: 'youtube', title: 'Vídeos do YouTube/Vimeo das aulas. Eles vêm por um arquivo de duplo clique que é salvo junto (usa o yt-dlp)' },
 ];
 
 function chipCount(key) {
@@ -497,6 +500,7 @@ function chipCount(key) {
   if (key === 'video') return videos.length;
   if (key === 'audio') return videos.filter((v) => audioUrlFor(v.data.url)).length;
   if (key === 'materiais') return leaves.filter((n) => n.type === 'material').length;
+  if (key === 'youtube') return leaves.filter((n) => n.type === 'externo').length;
   if (key === 'completo') return [...state.nodes.values()].filter((n) => n.type === 'grupo').reduce((s, g) => s + g.data.completos.length, 0);
   if (key === 'libras') {
     const urls = videos.map((v) => librasUrlFor(v.data.url)).filter(Boolean);
@@ -575,7 +579,8 @@ function nodeRow(n) {
     const nAulas = d.aulas.length;
     const nVid = n.leaves.filter((l) => l.type === 'video').length;
     const nMat = n.leaves.filter((l) => l.type === 'material').length;
-    const sub = d.error ? `<span class="warn-ico">${esc(d.error)}</span>` : [plural(nAulas, 'aula', 'aulas'), nVid ? plural(nVid, 'vídeo', 'vídeos') : '', nMat ? plural(nMat, 'material', 'materiais') : ''].filter(Boolean).join(' · ');
+    const nExt = n.leaves.filter((l) => l.type === 'externo').length;
+    const sub = d.error ? `<span class="warn-ico">${esc(d.error)}</span>` : [plural(nAulas, 'aula', 'aulas'), nVid ? plural(nVid, 'vídeo', 'vídeos') : '', nExt ? `${nExt} do YouTube` : '', nMat ? plural(nMat, 'material', 'materiais') : ''].filter(Boolean).join(' · ');
     return `<li class="node disc" data-key="${esc(n.key)}">
       <div class="row">
         <button class="row-toggle" type="button" aria-expanded="false" aria-label="Abrir ${esc(n.label)}">${icon('chevron', 16)}</button>
@@ -592,7 +597,8 @@ function nodeRow(n) {
   if (n.type === 'grupo') {
     const g = n.data;
     const nVid = g.videos.length;
-    const parts = [nVid ? plural(nVid, 'vídeo', 'vídeos') : '', g.completos.length ? 'aula completa' : '', g.materiais.length ? plural(g.materiais.length, 'material', 'materiais') : '', g.links.length ? plural(g.links.length, 'link', 'links') : ''].filter(Boolean);
+    const nExt = (g.externos || []).length;
+    const parts = [nVid ? plural(nVid, 'vídeo', 'vídeos') : '', nExt ? `${nExt} do YouTube` : '', g.completos.length ? 'aula completa' : '', g.materiais.length ? plural(g.materiais.length, 'material', 'materiais') : '', g.links.length ? plural(g.links.length, 'link', 'links') : ''].filter(Boolean);
     const glyph = g.ordem ? String(g.ordem).padStart(2, '0') : icon('layers', 15);
     const warn = g.avisos.length || g.error ? `<span class="warn-ico" title="${esc([g.error, ...g.avisos].filter(Boolean).join('\n'))}">${icon('alert', 15)}</span>` : '';
     const title = g.nome ? `${g.rotulo} ${g.ordem}` : '';
@@ -610,15 +616,19 @@ function nodeRow(n) {
     </li>`;
   }
   const isMat = n.type === 'material';
-  const sub = isMat && n.data.nomeArquivo && n.data.titulo && fold(n.data.titulo) !== fold(n.data.nomeArquivo.replace(/\.[^.]+$/, '')) ? `<span class="sub">${esc(n.data.titulo)}</span>` : '';
-  return `<li class="node leaf ${n.type === 'material' ? 'material' : 'video'}" data-key="${esc(n.key)}">
+  const isExt = n.type === 'externo';
+  const sub = isExt
+    ? `<span class="sub">Baixado pelo arquivo “Baixar vídeos do YouTube”, salvo junto</span>`
+    : isMat && n.data.nomeArquivo && n.data.titulo && fold(n.data.titulo) !== fold(n.data.nomeArquivo.replace(/\.[^.]+$/, '')) ? `<span class="sub">${esc(n.data.titulo)}</span>` : '';
+  const glyph = isExt ? icon('youtube', 16) : icon(isMat ? 'file' : 'play', isMat ? 16 : 14);
+  return `<li class="node leaf ${isMat ? 'material' : isExt ? 'externo' : 'video'}" data-key="${esc(n.key)}">
     <div class="row">
       <input class="cb" type="checkbox" id="${id}" />
       <label class="label" for="${id}">
-        <span class="glyph">${icon(isMat ? 'file' : 'play', isMat ? 16 : 14)}</span>
+        <span class="glyph">${glyph}</span>
         <span class="txt"><span class="name" data-name>${highlight(n.label)}</span>${sub}</span>
       </label>
-      <span class="meta"><span class="size" data-size></span></span>
+      <span class="meta">${isExt ? `<a class="tag yt" href="${esc(n.data.url)}" target="_blank" rel="noopener" title="Abrir no navegador">YouTube ↗</a>` : '<span class="size" data-size></span>'}</span>
     </div>
   </li>`;
 }
@@ -894,15 +904,17 @@ function updateSummary() {
     return n && leafEnabled(n) && !visibleLeavesSet().has(k);
   }).length;
   const el = $('#summary');
-  if (!s.files) {
+  const yt = s.externos ? ` + ${plural(s.externos, 'vídeo', 'vídeos')} do YouTube` : '';
+  if (!s.files && !s.externos) {
     el.innerHTML = `<strong>Nada selecionado</strong><span>Marque disciplinas, aulas ou temas para baixar.</span>`;
   } else {
-    el.innerHTML = `<strong>${plural(s.files, 'arquivo', 'arquivos')} · ${formatBytes(s.totalBytes, { approx: s.unknownSizes > 0 })}</strong>
+    const head = s.files ? `${plural(s.files, 'arquivo', 'arquivos')} · ${formatBytes(s.totalBytes, { approx: s.unknownSizes > 0 })}${yt}` : `${plural(s.externos, 'vídeo', 'vídeos')} do YouTube`;
+    el.innerHTML = `<strong>${head}</strong>
       <span>${plural(s.disciplinas, 'disciplina', 'disciplinas')} · ${plural(s.aulas, 'aula', 'aulas')}${pending ? ' · <span class="spinner"></span> calculando tamanho' : ''}${hiddenSel ? ` · inclui ${plural(hiddenSel, 'item', 'itens')} fora do filtro` : ''}</span>`;
   }
   const go = $('#go');
-  go.disabled = !s.files;
-  $('span', go).textContent = s.files ? `Baixar ${plural(s.files, 'arquivo', 'arquivos')}` : 'Baixar';
+  go.disabled = !s.files && !s.externos;
+  $('span', go).textContent = s.files ? `Baixar ${plural(s.files, 'arquivo', 'arquivos')}` : s.externos ? 'Salvar script do YouTube' : 'Baixar';
   $('#list-info').textContent = state.selected.size ? `${plural([...state.selected].filter((k) => leafEnabled(state.nodes.get(k))).length, 'item marcado', 'itens marcados')}` : '';
 }
 
@@ -978,6 +990,7 @@ async function runDownload({ handle, format, onlyEntries = null }) {
         onlyEntries.map((e) => e.url),
         (d, total) => setPrepText(`Conferindo tamanhos… ${d} de ${total}`),
       );
+      state.lastExternos = 0;
       missing = onlyEntries.filter((e) => sizes.missing(e.url));
       entries = onlyEntries.filter((e) => !sizes.missing(e.url)).map((e) => ({ ...e, size: sizes.sizeOf(e.url) }));
     } else {
@@ -994,6 +1007,7 @@ async function runDownload({ handle, format, onlyEntries = null }) {
       missing = plan.entries.filter((e) => sizes.missing(e.url));
       entries = plan.entries.filter((e) => !sizes.missing(e.url));
       state.lastIndex = plan.index;
+      state.lastExternos = plan.externos.length;
     }
   } catch (err) {
     renderError(err);
@@ -1027,7 +1041,7 @@ async function runDownload({ handle, format, onlyEntries = null }) {
       /* nada */
     }
   }
-  renderFinished(job, { format, handle, missing, error });
+  renderFinished(job, { format, handle, missing, error, externos: state.lastExternos || 0, scriptWarning: target.scriptWarning || null });
 }
 
 let prepEl = null;
@@ -1171,7 +1185,23 @@ function renderFailedList(failed) {
     .join('');
 }
 
-function renderFinished(job, { format, handle, missing, error }) {
+const isMac = /mac/i.test(navigator.userAgentData?.platform || navigator.platform || '');
+
+/** Instruções do script do YouTube para o sistema de quem está usando. */
+function youtubeNotice(count, format, scriptWarning) {
+  if (!count) return '';
+  if (scriptWarning) {
+    return `<div class="notice warn">${icon('youtube', 18)}<span>O Chrome não deixou gravar o arquivo dos vídeos do YouTube nesta pasta (${esc(scriptWarning)}). Para baixá-los, use o modo <b>ZIP</b>.</span></div>`;
+  }
+  const how = isMac
+    ? format === 'zip'
+      ? 'Depois de abrir o ZIP, dê dois cliques em <b>Baixar vídeos do YouTube (Mac)</b>. Se o macOS bloquear, abra o app <b>Terminal</b>, digite <code>bash</code> e um espaço, arraste o arquivo para a janela e aperte Enter.'
+      : 'Abra o app <b>Terminal</b>, digite <code>bash</code> e um espaço, arraste o arquivo <b>Baixar vídeos do YouTube (Mac)</b> para a janela e aperte Enter.'
+    : 'Dê dois cliques em <b>Baixar vídeos do YouTube (Windows)</b>. Se aparecer “O Windows protegeu o computador”, clique em <b>Mais informações</b> › <b>Executar assim mesmo</b>.';
+  return `<div class="notice">${icon('youtube', 18)}<span><b>${plural(count, 'vídeo do YouTube ficou', 'vídeos do YouTube ficaram')} para o final.</b> O navegador não consegue baixá-los sozinho, então salvei um arquivo que faz isso (usa o yt-dlp, baixado na primeira vez). ${how} Cada vídeo vai para a pasta da aula certa.</span></div>`;
+}
+
+function renderFinished(job, { format, handle, missing, error, externos = 0, scriptWarning = null }) {
   document.title = 'AVA Downloader';
   const s = job.snapshot();
   const elapsed = (s.finishedAt - s.startedAt) / 1000;
@@ -1210,6 +1240,7 @@ function renderFinished(job, { format, handle, missing, error }) {
       <div class="bar done" style="margin-top:22px"><i style="width:100%"></i></div>
       <div class="notice ok">${icon('sparkle', 18)}<span>${format === 'zip' ? `Abra <b>${esc(handle.name)}</b> e depois o arquivo <b>${INDEX_FILE}</b>: ele mostra tudo organizado e toca as aulas, mesmo sem internet.` : `Na pasta <b>${esc(handle.name)}/${FOLDER_NAME}</b>, abra <b>${INDEX_FILE}</b>: ele mostra tudo organizado e toca as aulas, mesmo sem internet.`}</span></div>
       ${partial ? `<div class="notice warn">${icon('alert', 18)}<span>${plural(s.counts.failed, 'arquivo não pôde', 'arquivos não puderam')} ser baixado${s.counts.failed > 1 ? 's' : ''}. ${format === 'zip' ? 'Eles estão listados no arquivo “LEIA-ME” dentro do ZIP.' : 'Tente de novo: o que já foi baixado não é baixado outra vez.'}</span></div>` : ''}
+      ${youtubeNotice(externos, format, scriptWarning)}
       ${missing.length ? `<div class="notice warn">${icon('info', 18)}<span>${plural(missing.length, 'arquivo não existe', 'arquivos não existem')} mais no servidor da Uninter e ${missing.length > 1 ? 'foram ignorados' : 'foi ignorado'}.</span></div>` : ''}
       <div class="cta">
         <button class="btn primary lg" id="more">${icon('download', 18)}Baixar mais aulas</button>

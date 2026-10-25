@@ -26,7 +26,8 @@ function dosDateTime(date) {
 }
 
 export class ZipEntry {
-  constructor(path, offset, size, { date, zip64 }) {
+  constructor(path, offset, size, { date, zip64, unixMode = 0 }) {
+    this.unixMode = unixMode;
     this.path = path;
     this.name = encoder.encode(path);
     if (this.name.length > MAX16) throw new Error(`Caminho longo demais: ${path}`);
@@ -74,7 +75,9 @@ export class ZipEntry {
     const v = new DataView(buf.buffer);
     const needs64 = extraLen > 0 || this.zip64Local;
     v.setUint32(0, 0x02014b50, true);
-    v.setUint16(4, 45, true); // versão 4.5, sistema "MS-DOS" (atributos 0 = arquivo comum em qualquer SO)
+    // Versão 4.5. Sistema "MS-DOS" com atributos 0 = arquivo comum em qualquer SO; "Unix" só quando
+    // a entrada precisa de permissão (ex.: script executável), com o modo nos 16 bits altos.
+    v.setUint16(4, this.unixMode ? (3 << 8) | 45 : 45, true);
     v.setUint16(6, needs64 ? 45 : 20, true);
     v.setUint16(8, FLAG_UTF8, true);
     v.setUint16(10, 0, true);
@@ -88,7 +91,7 @@ export class ZipEntry {
     v.setUint16(32, 0, true);
     v.setUint16(34, 0, true);
     v.setUint16(36, 0, true);
-    v.setUint32(38, 0, true);
+    v.setUint32(38, this.unixMode ? (this.unixMode << 16) >>> 0 : 0, true);
     v.setUint32(42, bigOffset ? MAX32 : this.offset, true);
     buf.set(this.name, 46);
     if (extraLen) {
@@ -170,10 +173,10 @@ export class ZipWriter {
   }
 
   /** Começa um arquivo de tamanho desconhecido no fim do ZIP (um por vez; use write/rewind e depois endAppend). */
-  beginAppend(path) {
+  beginAppend(path, { unixMode = 0 } = {}) {
     if (this.tailBusy) throw new Error('Já existe um arquivo sendo anexado.');
     this.tailBusy = true;
-    const entry = new ZipEntry(path, this.end, 0, { date: this.date, zip64: this.forceZip64 });
+    const entry = new ZipEntry(path, this.end, 0, { date: this.date, zip64: this.forceZip64, unixMode });
     entry.appending = true;
     return entry;
   }
@@ -196,8 +199,8 @@ export class ZipWriter {
   }
 
   /** Atalho para gravar um arquivo pequeno já em memória no fim do ZIP. */
-  async appendBytes(path, bytes) {
-    const entry = this.beginAppend(path);
+  async appendBytes(path, bytes, opts) {
+    const entry = this.beginAppend(path, opts);
     try {
       if (bytes.length) await this.write(entry, bytes);
       return await this.endAppend(entry);

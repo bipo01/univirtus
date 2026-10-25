@@ -19,7 +19,17 @@ export const DEFAULT_TYPES = Object.freeze({
   audio: false,
   libras: false,
   materiais: true,
+  youtube: true,
 });
+
+const isPlaylist = (url) => {
+  try {
+    const u = new URL(url);
+    return u.pathname === '/playlist' && u.searchParams.has('list');
+  } catch {
+    return false;
+  }
+};
 
 export function aulaFolderName(aula) {
   if (!aula.ordem && !aula.nome) return safeName(aula.rotulo);
@@ -55,7 +65,7 @@ export function gruposDe(disc) {
 export function leafKeys(node) {
   if (node.disciplinas) return node.disciplinas.flatMap(leafKeys);
   if (node.aulas) return gruposDe(node).flatMap(leafKeys);
-  return [...node.videos.map((v) => v.key), ...node.materiais.map((m) => m.key)];
+  return [...node.videos.map((v) => v.key), ...node.materiais.map((m) => m.key), ...(node.externos || []).map((x) => x.key)];
 }
 
 /**
@@ -92,6 +102,7 @@ export function folderNames(catalog) {
  */
 export function buildPlan(catalog, { selected, types = DEFAULT_TYPES, libras = new Map(), sizes = new Map() }) {
   const entries = [];
+  const externos = [];
   const unique = createUniquer();
   const index = [];
   const multiCurso = catalog.cursos.filter((c) => c.disciplinas.some((d) => leafKeys(d).some((k) => selected.has(k)))).length > 1;
@@ -115,7 +126,8 @@ export function buildPlan(catalog, { selected, types = DEFAULT_TYPES, libras = n
       for (const grupo of gruposDe(disc)) {
         const videos = grupo.videos.filter((v) => selected.has(v.key));
         const materiais = types.materiais ? grupo.materiais.filter((m) => selected.has(m.key)) : [];
-        if (!videos.length && !materiais.length) continue;
+        const ext = types.youtube ? (grupo.externos || []).filter((x) => selected.has(x.key)) : [];
+        if (!videos.length && !materiais.length && !ext.length) continue;
 
         const grupoLabel = grupo.nome ? `${grupo.rotulo} ${grupo.ordem} – ${grupo.nome}` : grupo.rotulo;
         const dir = dirs.get(grupo.key);
@@ -148,6 +160,13 @@ export function buildPlan(catalog, { selected, types = DEFAULT_TYPES, libras = n
           if (!m.url) continue;
           grupoIndex.itens.push(add(`${matDir}/${materialFileName(m)}`, m.url, 'material', { ...meta, titulo: m.titulo }));
         }
+        // YouTube/Vimeo: baixados depois pelo script do yt-dlp, direto nesta pasta.
+        for (const x of ext) {
+          const base = unique(`${dir}/YouTube - ${safeName(x.titulo, 90)}`);
+          const item = { path: `${base}.mp4`, base, url: x.url, kind: 'youtube', playlist: isPlaylist(x.url), ...meta, titulo: x.titulo };
+          externos.push(item);
+          grupoIndex.itens.push(item);
+        }
         if (grupoIndex.itens.length) discIndex.grupos.push(grupoIndex);
       }
       if (discIndex.grupos.length) cursoIndex.disciplinas.push(discIndex);
@@ -157,14 +176,15 @@ export function buildPlan(catalog, { selected, types = DEFAULT_TYPES, libras = n
 
   const totalBytes = entries.reduce((sum, e) => sum + (e.size || 0), 0);
   const unknownSizes = entries.filter((e) => e.size == null).length;
-  return { entries, index, totalBytes, unknownSizes, multiCurso };
+  return { entries, externos, index, totalBytes, unknownSizes, multiCurso };
 }
 
 /** Resumo para a barra inferior: contagem por tipo e tamanho estimado. */
 export function summarize(plan) {
   const byKind = {};
   for (const e of plan.entries) byKind[e.kind] = (byKind[e.kind] || 0) + 1;
-  const disciplinas = new Set(plan.entries.map((e) => `${e.curso}/${e.disciplina}`)).size;
-  const aulas = new Set(plan.entries.map((e) => `${e.curso}/${e.disciplina}/${e.aula}`)).size;
-  return { files: plan.entries.length, byKind, disciplinas, aulas, totalBytes: plan.totalBytes, unknownSizes: plan.unknownSizes };
+  const all = [...plan.entries, ...(plan.externos || [])];
+  const disciplinas = new Set(all.map((e) => `${e.curso}/${e.disciplina}`)).size;
+  const aulas = new Set(all.map((e) => `${e.curso}/${e.disciplina}/${e.aula}`)).size;
+  return { files: plan.entries.length, externos: (plan.externos || []).length, byKind, disciplinas, aulas, totalBytes: plan.totalBytes, unknownSizes: plan.unknownSizes };
 }

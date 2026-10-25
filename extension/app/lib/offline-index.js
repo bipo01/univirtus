@@ -6,8 +6,8 @@ const esc = (s) =>
 
 export const relHref = (path) => path.split('/').map(encodeURIComponent).join('/');
 
-const KIND_LABEL = { video: 'Vídeo', completo: 'Aula completa', audio: 'Áudio', libras: 'Libras', material: 'Material' };
-const KIND_ORDER = { completo: 0, video: 1, libras: 2, audio: 3, material: 4 };
+const KIND_LABEL = { video: 'Vídeo', completo: 'Aula completa', audio: 'Áudio', libras: 'Libras', material: 'Material', youtube: 'YouTube' };
+const KIND_ORDER = { completo: 0, video: 1, youtube: 2, libras: 3, audio: 4, material: 5 };
 const byKind = (a, b) => (KIND_ORDER[a.kind] ?? 9) - (KIND_ORDER[b.kind] ?? 9);
 
 /**
@@ -27,7 +27,7 @@ export function buildOfflineIndex(index, { isOk = () => true, geradoEm = new Dat
               i: g.itens
                 .filter(isOk)
                 .sort(byKind)
-                .map((e) => ({ t: e.titulo, k: e.kind, h: relHref(e.path) })),
+                .map((e) => ({ t: e.titulo, k: e.kind, h: relHref(e.path), ...(e.url && e.kind === 'youtube' ? { u: e.url } : {}) })),
               l: (g.links || []).map((l) => ({ t: l.titulo, h: l.url })),
             }))
             .filter((g) => g.i.length || g.l.length),
@@ -66,6 +66,7 @@ li a:hover,li a.on{background:var(--brand-soft);color:var(--brand)}li a small{ma
 video,audio{width:100%;border-radius:12px;background:#000;max-height:70vh}audio{background:none}
 .now h2{margin:12px 4px 2px;font-size:18px}.now p{margin:0 4px;color:var(--muted)}
 .empty{color:var(--muted);text-align:center;margin-top:20vh}
+.yt{padding:28px;border-radius:12px;background:var(--brand-soft)}.yt p{margin:0 0 12px}.yt a{color:var(--brand);font-weight:600}
 @media (max-width:800px){main{grid-template-columns:1fr;height:auto}nav{border-right:0;border-bottom:1px solid var(--line);max-height:50vh}}
 </style>
 </head>
@@ -84,7 +85,8 @@ for(const it of g.i){if(!(m(d.n)||m(g.n)||m(it.t)))continue;const a=h('a',{href:
 for(const l of g.l){if(!(m(d.n)||m(g.n)||m(l.t)))continue;ul.append(h('li',{},h('a',{href:l.h,target:'_blank',rel:'noopener'},h('span',{text:'↗ '+l.t}),h('small',{text:'link'}))));any=true}
 if(ul.children.length){gg.append(ul);dd.append(gg);if(n)gg.open=true}}if(any){if(n)dd.open=true;nav.append(dd)}}}}
 function play(it,g,d,a){document.querySelectorAll('a.on').forEach(x=>x.classList.remove('on'));a.classList.add('on');view.textContent='';
-const media=h(it.k==='audio'?'audio':'video',{controls:'',autoplay:'',src:it.h});view.append(h('div',{class:'player'},media,h('div',{class:'now'},h('h2',{text:it.t}),h('p',{text:d.n+' · '+g.n}))));
+const media=h(it.k==='audio'?'audio':'video',{controls:'',autoplay:'',src:it.h});const info=h('div',{class:'now'},h('h2',{text:it.t}),h('p',{text:d.n+' · '+g.n}));view.append(h('div',{class:'player'},media,info));
+if(it.u)media.onerror=()=>{media.replaceWith(h('div',{class:'yt'},h('p',{text:'Este vídeo do YouTube ainda não foi baixado. Rode o arquivo “Baixar vídeos do YouTube” desta pasta, ou assista online:'}),h('a',{href:it.u,target:'_blank',rel:'noopener',text:'Abrir no YouTube ↗'})))};
 media.onended=()=>{const all=[...document.querySelectorAll('nav a[data-k]')].filter(x=>x.dataset.k!=='material');const i=all.indexOf(a);if(all[i+1])all[i+1].click()}}
 const th=document.getElementById('theme');function setTheme(t){document.documentElement.dataset.theme=t;th.textContent=t==='dark'?'☀ Modo claro':'☾ Modo escuro';try{localStorage.setItem('ava-theme',t)}catch(e){}}
 let saved='light';try{saved=localStorage.getItem('ava-theme')==='dark'?'dark':'light'}catch(e){}setTheme(saved);th.onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');

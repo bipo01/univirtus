@@ -5,6 +5,7 @@
 //     então rodar de novo só baixa o que falta.
 
 import { buildOfflineIndex } from './offline-index.js';
+import { buildMacScript, buildWindowsScript, MAC_SCRIPT, WIN_SCRIPT } from './ytdlp.js';
 import { ZipWriter } from './zip.js';
 
 export const INDEX_FILE = 'Assistir aulas.html';
@@ -391,7 +392,12 @@ function failureReport(items) {
 
 function indexBytes(index, items) {
   const ok = new Set(items.filter((i) => i.status === 'done' || i.status === 'skipped').map((i) => i.path));
-  return encoder.encode(buildOfflineIndex(index, { isOk: (e) => ok.has(e.path) }));
+  return encoder.encode(buildOfflineIndex(index, { isOk: (e) => e.kind === 'youtube' || ok.has(e.path) }));
+}
+
+/** Itens do YouTube que estão no índice da execução atual. */
+function externosDe(index) {
+  return index.flatMap((c) => c.disciplinas.flatMap((d) => d.grupos.flatMap((g) => g.itens.filter((e) => e.kind === 'youtube'))));
 }
 
 const SUBFOLDER_KIND = { Áudio: 'audio', Libras: 'libras', Materiais: 'material' };
@@ -425,6 +431,10 @@ export async function scanTree(base, currentIndex = []) {
         for (const f of await listDir(g.handle)) {
           if (f.kind === 'file') {
             const completo = /^00 - Aula completa\./.test(f.name);
+            if (/^YouTube - /.test(f.name)) {
+              grupo.itens.push({ path: `${dir}/${f.name}`, titulo: titleFromFile(f.name).replace(/^YouTube - /, ''), kind: 'youtube' });
+              continue;
+            }
             grupo.itens.push({ path: `${dir}/${f.name}`, titulo: completo ? 'Aula completa' : titleFromFile(f.name), kind: completo ? 'completo' : /\.(mp3|m4a)$/i.test(f.name) ? 'audio' : /\.(mp4|m4v|webm|mov)$/i.test(f.name) ? 'video' : 'material' });
           } else if (SUBFOLDER_KIND[f.name]) {
             for (const s of (await listDir(f.handle)).filter((x) => x.kind === 'file')) {
@@ -440,6 +450,34 @@ export async function scanTree(base, currentIndex = []) {
     if (curso.disciplinas.length) cursos.push(curso);
   }
   return cursos;
+}
+
+/**
+ * Junta ao índice escaneado do disco os vídeos do YouTube da execução atual que ainda não estão
+ * na pasta (eles chegam depois, pelo script). Cria curso/disciplina/aula se preciso.
+ */
+export function mergeExternos(scanned, current) {
+  for (const c of current) {
+    for (const d of c.disciplinas) {
+      for (const g of d.grupos) {
+        const yt = g.itens.filter((e) => e.kind === 'youtube');
+        if (!yt.length) continue;
+        const [cursoDir, discDir] = g.dir.split('/');
+        let sc = scanned.find((x) => x.nome === cursoDir);
+        if (!sc) scanned.push((sc = { nome: cursoDir, disciplinas: [] }));
+        let sd = sc.disciplinas.find((x) => x.nome === discDir);
+        if (!sd) sc.disciplinas.push((sd = { nome: discDir, grupos: [] }));
+        let sg = sd.grupos.find((x) => x.dir === g.dir);
+        if (!sg) sd.grupos.push((sg = { nome: g.dir.split('/').pop(), dir: g.dir, itens: [], links: g.links || [] }));
+        for (const e of yt) {
+          const i = sg.itens.findIndex((x) => x.path === e.path);
+          if (i >= 0) sg.itens[i] = { ...sg.itens[i], kind: 'youtube', url: e.url, titulo: e.titulo };
+          else sg.itens.push(e);
+        }
+      }
+    }
+  }
+  return scanned;
 }
 
 /** Grava tudo num único .zip escolhido pelo usuário (FileSystemFileHandle). */
@@ -495,6 +533,11 @@ export class ZipTarget {
 
   async finish(items) {
     await this.zip.appendBytes(INDEX_FILE, indexBytes(this.index, items));
+    const externos = externosDe(this.index);
+    if (externos.length) {
+      await this.zip.appendBytes(MAC_SCRIPT, encoder.encode(buildMacScript(externos)), { unixMode: 0o100755 });
+      await this.zip.appendBytes(WIN_SCRIPT, encoder.encode(buildWindowsScript(externos)));
+    }
     const report = failureReport(items);
     if (report) await this.zip.appendBytes(REPORT_FILE, report);
     const end = await this.zip.finish();
@@ -602,7 +645,19 @@ export class DirectoryTarget {
     } catch {
       index = null;
     }
+    const externos = externosDe(this.index);
+    if (index) mergeExternos(index, this.index);
     await this.writeFile(INDEX_FILE, index ? encoder.encode(buildOfflineIndex(index)) : indexBytes(this.index, items));
+    this.scriptWarning = null;
+    if (externos.length) {
+      try {
+        await this.writeFile(MAC_SCRIPT, encoder.encode(buildMacScript(externos)));
+        await this.writeFile(WIN_SCRIPT, encoder.encode(buildWindowsScript(externos)));
+      } catch (err) {
+        // O Chrome pode recusar gravar scripts numa pasta; o ZIP não tem essa limitação.
+        this.scriptWarning = describeError(err);
+      }
+    }
     const report = failureReport(items);
     if (report) await this.writeFile(REPORT_FILE, report);
     else await this.base.removeEntry(REPORT_FILE).catch(() => {});

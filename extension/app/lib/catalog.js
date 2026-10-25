@@ -76,6 +76,17 @@ export function librasUrlFor(url) {
   return u.href;
 }
 
+const EXTERNAL_VIDEO_HOSTS = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com|vimeo\.com)$/i;
+
+/** Vídeo em plataforma externa (YouTube, Vimeo): não dá para baixar pelo navegador, vai para o script do yt-dlp. */
+export function isExternalVideo(url) {
+  try {
+    return EXTERNAL_VIDEO_HOSTS.test(new URL(url).hostname);
+  } catch {
+    return false;
+  }
+}
+
 function isDirectVideo(url) {
   if (!url) return false;
   if (isVod(url)) return true;
@@ -242,6 +253,7 @@ async function collectItems(api, atividades, grupo, keyPrefix) {
       } else if (link) {
         const url = normalizeMediaUrl(link);
         if (url && isDirectVideo(url)) grupo.videos.push({ url, titulo: titulo || `Vídeo ${++vIndex}` });
+        else if (url && isExternalVideo(url)) grupo.externos.push({ url, titulo: titulo || 'Vídeo' });
         else if (url) grupo.links.push({ url, titulo: titulo || url });
       }
     }
@@ -266,6 +278,8 @@ async function collectItems(api, atividades, grupo, keyPrefix) {
   grupo.videos = flat.map((v, i) => ({ ...v, key: `${keyPrefix}:v:${i}`, titulo: v.titulo || `Vídeo ${i + 1}` }));
   const vistos = new Set(seen);
   grupo.completos = completos.filter((c) => !vistos.has(c.url) && vistos.add(c.url));
+  const ext = new Set();
+  grupo.externos = grupo.externos.filter((x) => !ext.has(x.url) && ext.add(x.url)).map((x, i) => ({ ...x, key: `${keyPrefix}:y:${i}` }));
 }
 
 async function resolveNomesArquivos(api, materiais) {
@@ -356,6 +370,7 @@ async function loadDisciplina(api, sala, now) {
         materiais: [],
         links: [],
         completos: [],
+        externos: [],
         avisos: [],
         error: null,
       };
@@ -378,24 +393,26 @@ async function loadDisciplina(api, sala, now) {
         materiais: [],
         links: [],
         completos: [],
+        externos: [],
         avisos: [],
         error: null,
       };
       for (const e of complementares) {
         try {
-          const parcial = { videos: [], materiais: [], links: [], completos: [], avisos: [] };
+          const parcial = { videos: [], materiais: [], links: [], completos: [], externos: [], avisos: [] };
           await collectItems(api, await atividades(e), parcial, `${extra.key}:${e.id}`);
           extra.videos.push(...parcial.videos);
           extra.materiais.push(...parcial.materiais);
           extra.links.push(...parcial.links);
           extra.completos.push(...parcial.completos);
+          extra.externos.push(...parcial.externos);
           extra.avisos.push(...parcial.avisos);
         } catch (err) {
           if (err?.session) throw err;
           extra.error = `Parte do material complementar não pôde ser lida (${errorText(err)}).`;
         }
       }
-      if (extra.videos.length || extra.materiais.length || extra.links.length) disc.complementar = extra;
+      if (extra.videos.length || extra.materiais.length || extra.links.length || extra.externos.length) disc.complementar = extra;
     }
 
     const materiais = [...disc.aulas.flatMap((a) => a.materiais), ...(disc.complementar?.materiais || [])];
