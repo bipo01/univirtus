@@ -37,8 +37,23 @@
 
     <dialog id="settings" class="popover">
       <form method="dialog">
-        <h2>Configurações</h2>
-        <label class="field">
+        <h2>Mais opções</h2>
+        <p class="hint" style="margin:-8px 0 14px">Para quem quer algo além do normal. Se não souber, deixe tudo desmarcado.</p>
+        <div class="extras">
+          <label class="extra">
+            <input type="checkbox" class="cb" data-extra="completo" />
+            <span><b>Aula inteira num vídeo só</b><small>A Uninter também oferece cada aula num único vídeo. É o <b>mesmo conteúdo</b> dos “Vídeos das aulas”, só que sem a divisão por tema. Ocupa o dobro do espaço se baixar os dois.</small></span>
+          </label>
+          <label class="extra">
+            <input type="checkbox" class="cb" data-extra="audio" />
+            <span><b>Áudio em MP3</b><small>Só o som das aulas, para ouvir no celular ou no carro.</small></span>
+          </label>
+          <label class="extra">
+            <input type="checkbox" class="cb" data-extra="libras" />
+            <span><b>Vídeos em Libras</b><small>Versões com intérprete de Libras, quando a aula tiver.</small></span>
+          </label>
+        </div>
+        <label class="field" style="margin-top:18px">
           <span>Downloads ao mesmo tempo</span>
           <select id="opt-concurrency">
             <option value="2">2 — conexão mais lenta</option>

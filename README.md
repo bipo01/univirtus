@@ -49,15 +49,12 @@ Pronto. Não apague nem mova a pasta depois de instalar: o Chrome usa a extensã
 1. Abra o **AVA** e entre com seu RU e senha, como sempre.
 2. Clique no botão **Baixar aulas** (canto inferior direito do AVA) ou no ícone da extensão.
 3. Tudo já vem marcado. Desmarque o que não quiser, ou use a busca para achar uma aula ou tema.
-4. Em **Incluir**, escolha o tipo de conteúdo:
-   | Opção | O que é |
-   |---|---|
-   | **Vídeos por tema** | Cada tema da aula em um vídeo (Conversa inicial, Tema 1, Tema 2…). Vem marcado. |
-   | **Aula completa** | A aula inteira em um vídeo só. É a junção dos temas, então ocupa o mesmo espaço **de novo**. |
-   | **Áudio MP3** | Só o áudio, ótimo para ouvir no celular. |
-   | **Libras** | Vídeos com intérprete de Libras, quando a aula tiver. |
-   | **Materiais** | PDFs, apostilas e arquivos das aulas e do material complementar. |
-   | **YouTube** | Vídeos do YouTube/Vimeo que aparecem nas aulas. Veja abaixo. |
+4. Em **Incluir**, deixe marcado o que quer (tudo já vem marcado):
+   - **Vídeos das aulas**: os vídeos de cada aula, um arquivo por tema.
+   - **PDFs e materiais**: apostilas, roteiros e arquivos das aulas.
+   - **Vídeos do YouTube**: vídeos do YouTube que aparecem nas aulas, baixados em MP4.
+
+   Em **Mais opções** dá para pedir também a aula inteira num vídeo só, o áudio em MP3 e os vídeos em Libras. Se não souber, não precisa mexer.
 5. Em **Salvar como**, escolha:
    - **ZIP**: um arquivo único, fácil de guardar ou mandar para alguém.
    - **Pasta**: melhor para downloads grandes. Se você baixar de novo na mesma pasta, ela **só baixa o que falta**. Ótimo para baixar as aulas novas no meio do semestre.
@@ -80,15 +77,11 @@ Abra o AVA e faça login. A extensão percebe sozinha e continua.
 **Alguns arquivos falharam.**
 Clique em **Tentar de novo os que falharam**. No ZIP, a lista dos que falharam fica no arquivo `LEIA-ME - arquivos com erro.txt`.
 
-**Qual a diferença entre “Vídeos por tema” e “Aula completa”?**
-É o mesmo conteúdo. A Uninter grava cada aula inteira e também a divide em partes (Conversa inicial, Tema 1 … Tema 5, Na prática, Finalizando). “Vídeos por tema” baixa as partes, uma por arquivo, mais fácil de achar um assunto. “Aula completa” baixa um vídeo único com tudo. Marcar os dois ocupa o dobro de espaço.
+**O que é “Aula inteira num vídeo só”, em Mais opções?**
+A Uninter publica cada aula de dois jeitos, com o **mesmo conteúdo**: em vários vídeos curtos, um por tema (Conversa inicial, Tema 1, Tema 2…, Finalizando), e num vídeo único com tudo. A extensão baixa os vídeos por tema, que são mais fáceis de usar. Só marque a aula inteira se preferir um arquivo único por aula: baixar os dois ocupa o dobro do espaço com o mesmo conteúdo.
 
 **E os vídeos do YouTube?**
-O navegador não consegue baixar vídeos do YouTube sozinho. Por isso, quando a seleção tem vídeos do YouTube, a extensão salva junto um arquivo **“Baixar vídeos do YouTube”** (uma versão para Mac e outra para Windows) que baixa cada vídeo direto na pasta da aula certa, em até 1080p:
-- **Windows:** dê dois cliques em `Baixar vídeos do YouTube (Windows).bat`. Se aparecer “O Windows protegeu o computador”, clique em **Mais informações** › **Executar assim mesmo**.
-- **Mac:** dê dois cliques em `Baixar vídeos do YouTube (Mac).command`. Se o macOS bloquear (ou se você usou o modo Pasta), abra o app **Terminal**, digite `bash` e um espaço, arraste o arquivo para a janela e aperte Enter.
-
-Na primeira vez ele baixa as ferramentas necessárias, de fontes oficiais ([yt-dlp](https://github.com/yt-dlp/yt-dlp), [deno](https://github.com/denoland/deno) e [ffmpeg](https://ffmpeg.org/download.html)), numa pasta só dele: nada é instalado no sistema. Pode rodar de novo quando quiser: o que já foi baixado é pulado.
+São baixados pela própria extensão, junto com o resto, em MP4 (até 1080p) que abre em qualquer player. Ficam na pasta da aula, com o nome “YouTube - título.mp4”. Se um vídeo for privado ou tiver sido removido do YouTube, ele aparece como “indisponível” e fica de fora.
 
 Outros links (biblioteca virtual, aulas ao vivo) continuam como links: aparecem na aula e no `Assistir aulas.html`.
 
@@ -116,7 +109,7 @@ Como funciona:
 | Fila de download (paralela, pausa, Range, novas tentativas) e destinos ZIP/Pasta | `extension/app/lib/downloader.js` |
 | ZIP com ZIP64 gravado direto no disco, em paralelo | `extension/app/lib/zip.js`, `crc32.js` |
 | Página offline “Assistir aulas.html” | `extension/app/lib/offline-index.js` |
-| Scripts do YouTube (yt-dlp) para Mac e Windows | `extension/app/lib/ytdlp.js` |
+| Download do YouTube (API do player + HLS) e remontagem em MP4 sem recodificar | `extension/app/lib/youtube.js`, `media/ts.js`, `media/adts.js`, `media/mp4.js` |
 | Interface | `extension/app/app.html`, `app.css`, `app.js` |
 
 Detalhes da API do AVA e regras do projeto: [AGENTS.md](AGENTS.md).

@@ -13,6 +13,7 @@
 //   repositorio/SistemaRepositorio/{id}                                → nome original de um arquivo
 
 import { pool } from './util.js';
+import { youtubeVideoId } from './youtube.js';
 
 const VOD_HOST = 'vod.grupouninter.com.br';
 const AUD_HOST = 'aud.grupouninter.com.br';
@@ -74,17 +75,6 @@ export function librasUrlFor(url) {
   parts[parts.length - 1] = `L${parts[parts.length - 1]}`;
   u.pathname = parts.join('/');
   return u.href;
-}
-
-const EXTERNAL_VIDEO_HOSTS = /(^|\.)(youtube\.com|youtu\.be|youtube-nocookie\.com|vimeo\.com)$/i;
-
-/** Vídeo em plataforma externa (YouTube, Vimeo): não dá para baixar pelo navegador, vai para o script do yt-dlp. */
-export function isExternalVideo(url) {
-  try {
-    return EXTERNAL_VIDEO_HOSTS.test(new URL(url).hostname);
-  } catch {
-    return false;
-  }
 }
 
 function isDirectVideo(url) {
@@ -253,7 +243,7 @@ async function collectItems(api, atividades, grupo, keyPrefix) {
       } else if (link) {
         const url = normalizeMediaUrl(link);
         if (url && isDirectVideo(url)) grupo.videos.push({ url, titulo: titulo || `Vídeo ${++vIndex}` });
-        else if (url && isExternalVideo(url)) grupo.externos.push({ url, titulo: titulo || 'Vídeo' });
+        else if (url && youtubeVideoId(url)) grupo.externos.push({ url, videoId: youtubeVideoId(url), titulo: titulo || 'Vídeo do YouTube' });
         else if (url) grupo.links.push({ url, titulo: titulo || url });
       }
     }
@@ -279,7 +269,7 @@ async function collectItems(api, atividades, grupo, keyPrefix) {
   const vistos = new Set(seen);
   grupo.completos = completos.filter((c) => !vistos.has(c.url) && vistos.add(c.url));
   const ext = new Set();
-  grupo.externos = grupo.externos.filter((x) => !ext.has(x.url) && ext.add(x.url)).map((x, i) => ({ ...x, key: `${keyPrefix}:y:${i}` }));
+  grupo.externos = grupo.externos.filter((x) => !ext.has(x.videoId) && ext.add(x.videoId)).map((x, i) => ({ ...x, key: `${keyPrefix}:y:${i}` }));
 }
 
 async function resolveNomesArquivos(api, materiais) {

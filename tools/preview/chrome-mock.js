@@ -56,7 +56,7 @@
         };
       const atv = [];
       if (i === 4) {
-        atv.push({ ordem: 1, nomeAtividade: 'Palestra de abertura', atividadeItemAprendizagens: [item('video', [{ nomeTipoRecurso: 'link', valorEtiqueta: 'https://youtu.be/exemplo' }])] });
+        atv.push({ ordem: 1, nomeAtividade: 'Palestra de abertura', atividadeItemAprendizagens: [item('video', [{ nomeTipoRecurso: 'link', valorEtiqueta: 'https://youtu.be/jNQXAC9IVRw' }])] });
         atv.push({ ordem: 2, nomeAtividade: 'Roteiro da atividade', atividadeItemAprendizagens: [item('arquivo', arq(id * 10 + 3))] });
       } else if (i === 7) {
         atv.push({ ordem: 1, nomeAtividade: `Aula ${k} - com legenda`, atividadeItemAprendizagens: [item('video', [{ nomeTipoRecurso: 'link', valorEtiqueta: `https://vod.grupouninter.com.br/2025/AGO/PT-A0${k}.mp4` }])] });
@@ -122,6 +122,7 @@
     scripting: { async executeScript() {} },
     windows: { async update() {} },
     power: { requestKeepAwake() {}, releaseKeepAwake() {} },
+    declarativeNetRequest: { async updateSessionRules() {} },
   };
 
   // Seletores de arquivo → OPFS (sistema de arquivos privado do navegador), para testar a gravação real
@@ -140,6 +141,9 @@
   window.fetch = (input, init) => {
     const url = typeof input === 'string' ? input : input.url;
     const u = new URL(url, location.href);
+    if (/(^|\.)(youtube\.com|googlevideo\.com)$/.test(u.hostname)) {
+      return realFetch(`/__yt?u=${encodeURIComponent(u.href)}`, { method: init?.method || 'GET', headers: init?.headers, body: init?.body, signal: init?.signal });
+    }
     if (/grupouninter\.com\.br$|univirtuscdn\.uninter\.com$/.test(u.hostname) || u.pathname.includes('SistemaRepositorioPublico')) {
       return realFetch(`/__media/${u.hostname}${u.pathname}${u.search ? `__${encodeURIComponent(u.search)}` : ''}`, init);
     }

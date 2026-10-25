@@ -1,4 +1,10 @@
-// Abre (ou traz para frente) a página da extensão, lembrando de qual aba do AVA ela veio.
+// Abre (ou traz para frente) a página da extensão, lembrando de qual aba do AVA ela veio,
+// e mantém a regra que permite baixar vídeos do YouTube.
+
+import { ensureYouTubeRule } from './app/lib/yt-rule.js';
+
+chrome.runtime.onInstalled.addListener(() => ensureYouTubeRule().catch(() => {}));
+chrome.runtime.onStartup.addListener(() => ensureYouTubeRule().catch(() => {}));
 
 const APP_URL = chrome.runtime.getURL('app/app.html');
 const AVA_PREFIX = 'https://univirtus.uninter.com/';

@@ -22,14 +22,7 @@ export const DEFAULT_TYPES = Object.freeze({
   youtube: true,
 });
 
-const isPlaylist = (url) => {
-  try {
-    const u = new URL(url);
-    return u.pathname === '/playlist' && u.searchParams.has('list');
-  } catch {
-    return false;
-  }
-};
+
 
 export function aulaFolderName(aula) {
   if (!aula.ordem && !aula.nome) return safeName(aula.rotulo);
@@ -102,7 +95,6 @@ export function folderNames(catalog) {
  */
 export function buildPlan(catalog, { selected, types = DEFAULT_TYPES, libras = new Map(), sizes = new Map() }) {
   const entries = [];
-  const externos = [];
   const unique = createUniquer();
   const index = [];
   const multiCurso = catalog.cursos.filter((c) => c.disciplinas.some((d) => leafKeys(d).some((k) => selected.has(k)))).length > 1;
@@ -160,12 +152,9 @@ export function buildPlan(catalog, { selected, types = DEFAULT_TYPES, libras = n
           if (!m.url) continue;
           grupoIndex.itens.push(add(`${matDir}/${materialFileName(m)}`, m.url, 'material', { ...meta, titulo: m.titulo }));
         }
-        // YouTube/Vimeo: baixados depois pelo script do yt-dlp, direto nesta pasta.
+        // YouTube: a extensão baixa e remonta num MP4 (youtube.js); o tamanho só se sabe no fim.
         for (const x of ext) {
-          const base = unique(`${dir}/YouTube - ${safeName(x.titulo, 90)}`);
-          const item = { path: `${base}.mp4`, base, url: x.url, kind: 'youtube', playlist: isPlaylist(x.url), ...meta, titulo: x.titulo };
-          externos.push(item);
-          grupoIndex.itens.push(item);
+          grupoIndex.itens.push(add(`${dir}/${safeFileName(`YouTube - ${x.titulo}`, 'mp4')}`, x.url, 'youtube', { ...meta, titulo: x.titulo, videoId: x.videoId }));
         }
         if (grupoIndex.itens.length) discIndex.grupos.push(grupoIndex);
       }
@@ -176,15 +165,14 @@ export function buildPlan(catalog, { selected, types = DEFAULT_TYPES, libras = n
 
   const totalBytes = entries.reduce((sum, e) => sum + (e.size || 0), 0);
   const unknownSizes = entries.filter((e) => e.size == null).length;
-  return { entries, externos, index, totalBytes, unknownSizes, multiCurso };
+  return { entries, index, totalBytes, unknownSizes, multiCurso };
 }
 
 /** Resumo para a barra inferior: contagem por tipo e tamanho estimado. */
 export function summarize(plan) {
   const byKind = {};
   for (const e of plan.entries) byKind[e.kind] = (byKind[e.kind] || 0) + 1;
-  const all = [...plan.entries, ...(plan.externos || [])];
-  const disciplinas = new Set(all.map((e) => `${e.curso}/${e.disciplina}`)).size;
-  const aulas = new Set(all.map((e) => `${e.curso}/${e.disciplina}/${e.aula}`)).size;
-  return { files: plan.entries.length, externos: (plan.externos || []).length, byKind, disciplinas, aulas, totalBytes: plan.totalBytes, unknownSizes: plan.unknownSizes };
+  const disciplinas = new Set(plan.entries.map((e) => `${e.curso}/${e.disciplina}`)).size;
+  const aulas = new Set(plan.entries.map((e) => `${e.curso}/${e.disciplina}/${e.aula}`)).size;
+  return { files: plan.entries.length, youtube: byKind.youtube || 0, byKind, disciplinas, aulas, totalBytes: plan.totalBytes, unknownSizes: plan.unknownSizes };
 }

@@ -822,14 +822,6 @@ select:focus-visible {
 .leaf.material .glyph {
   color: var(--amber);
 }
-.leaf.externo .glyph {
-  color: #e03131;
-}
-.tag.yt {
-  color: #e03131;
-  background: color-mix(in srgb, #e03131 10%, transparent);
-  text-decoration: none;
-}
 .notice code {
   font: 600 12px var(--mono);
   padding: 1px 5px;
@@ -1186,7 +1178,7 @@ dialog.popover {
   border: 1px solid var(--line);
   border-radius: var(--r-lg);
   padding: 24px;
-  width: min(420px, calc(100vw - 32px));
+  width: min(480px, calc(100vw - 32px));
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow-lg);
@@ -1198,6 +1190,50 @@ dialog::backdrop {
 dialog h2 {
   margin: 0 0 16px;
   font-size: 18px;
+}
+.extras {
+  display: grid;
+  gap: 8px;
+}
+.extra {
+  display: grid;
+  grid-template-columns: 24px 1fr;
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid var(--line);
+  cursor: pointer;
+}
+.extra:hover {
+  border-color: var(--brand);
+}
+.extra .cb {
+  margin-top: 1px;
+}
+.extra b {
+  display: block;
+}
+.extra small {
+  display: block;
+  color: var(--text-2);
+  font-size: 12.5px;
+  margin-top: 2px;
+  line-height: 1.45;
+}
+.extra small b {
+  display: inline;
+}
+.more-opts {
+  margin-left: 4px;
+}
+.leaf.youtube .glyph {
+  color: #e03131;
+}
+.label .sub a {
+  color: inherit;
+}
+.label .sub a:hover {
+  color: var(--brand-ink);
 }
 .field {
   display: grid;

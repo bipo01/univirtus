@@ -5,7 +5,6 @@
 //     então rodar de novo só baixa o que falta.
 
 import { buildOfflineIndex } from './offline-index.js';
-import { buildMacScript, buildWindowsScript, MAC_SCRIPT, WIN_SCRIPT } from './ytdlp.js';
 import { ZipWriter } from './zip.js';
 
 export const INDEX_FILE = 'Assistir aulas.html';
@@ -152,7 +151,13 @@ function concat(chunks, length) {
  * progress (bytes) e error (texto).
  */
 export class DownloadJob {
-  constructor({ entries, target, concurrency = 4, fetchImpl = (...a) => fetch(...a), retries = 5, chunkSize = 4 << 20, backoff = (n) => Math.min(30000, 1000 * 2 ** (n - 1)) }) {
+  /**
+   * @param youtube    { resolve(videoId), download(info, { sink, getSegment, onProgress }) } — para itens kind 'youtube'
+   * @param tempStore  { create() → { sink, finish() → File, remove() } } — onde o MP4 do YouTube é montado antes de ir ao destino
+   */
+  constructor({ entries, target, concurrency = 4, fetchImpl = (...a) => fetch(...a), retries = 5, chunkSize = 4 << 20, backoff = (n) => Math.min(30000, 1000 * 2 ** (n - 1)), youtube = null, tempStore = null }) {
+    this.youtube = youtube;
+    this.tempStore = tempStore;
     this.items = entries.map((e) => ({ ...e, status: 'pending', progress: 0, error: null, attempt: 0 }));
     this.target = target;
     this.concurrency = concurrency;
@@ -197,6 +202,7 @@ export class DownloadJob {
       await Promise.all(Array.from({ length: Math.max(1, Math.min(this.concurrency, parallel.length)) }, worker));
       for (const it of sequential) {
         if (this.gate.cancelled) break;
+        if (it.status === 'failed' || it.status === 'skipped') continue;
         await this.runItem(it);
       }
       if (this.gate.cancelled) throw this.fatal || new CancelledError();
@@ -215,6 +221,7 @@ export class DownloadJob {
       }
       throw this.fatal || err;
     } finally {
+      for (const it of this.items) await this.releaseTemp(it);
       this.finishedAt = Date.now();
     }
   }
@@ -225,18 +232,25 @@ export class DownloadJob {
     it.status = 'active';
     let writer = null;
     try {
-      const prep = await this.target.prepare(it);
-      if (prep?.skip) {
-        it.status = 'skipped';
-        it.progress = prep.size ?? it.size ?? 0;
-        return;
+      if (!it.prepared) {
+        const prep = await this.target.prepare(it);
+        it.prepared = true;
+        if (prep?.skip) {
+          it.status = 'skipped';
+          it.progress = prep.size ?? it.size ?? 0;
+          return;
+        }
       }
+      if (it.kind === 'youtube' && !it.file) await this.produceYouTube(it);
       writer = await this.target.open(it);
-      await this.transfer(it, writer);
+      if (it.file) await this.copyFile(it, writer);
+      else await this.transfer(it, writer);
       await writer.close();
       it.status = 'done';
-      it.progress = writer.written;
+      it.progress = it.file ? it.file.size : writer.written;
+      await this.releaseTemp(it);
     } catch (err) {
+      await this.releaseTemp(it);
       if (writer) {
         try {
           // Cancelado: o destino inteiro será descartado, então não vale completar o arquivo.
@@ -259,6 +273,120 @@ export class DownloadJob {
         this.gate.cancel();
       }
     }
+  }
+
+  /** Monta o MP4 do YouTube num arquivo temporário (it.file). */
+  async produceYouTube(it) {
+    if (!this.youtube || !this.tempStore) throw new Error('Download do YouTube indisponível');
+    const info = await this.retrying(it, () => this.youtube.resolve(it.videoId));
+    it.expected = info.estimate || null;
+    // Quando o vídeo falha, os segmentos ainda em andamento param e não mexem mais no item.
+    const run = { dead: false, controllers: new Set() };
+    try {
+      it.temp = await this.tempStore.create();
+      await this.youtube.download(info, {
+        sink: it.temp.sink,
+        getSegment: (url) => this.fetchBytes(it, url, run),
+        getText: async (url) => new TextDecoder().decode(await this.fetchBytes(it, url, run)),
+        onProgress: (done, total) => {
+          if (run.dead) return;
+          it.progress = done;
+          it.expected = total;
+        },
+      });
+      it.file = await it.temp.finish();
+    } catch (err) {
+      if (err?.name === 'QuotaExceededError') err.disk = true; // sem espaço para montar o vídeo
+      throw err;
+    } finally {
+      run.dead = true;
+      for (const c of run.controllers) c.abort();
+    }
+    it.expected = it.file.size;
+    it.progress = it.file.size;
+  }
+
+  async releaseTemp(it) {
+    const temp = it.temp;
+    it.temp = null;
+    it.file = null;
+    if (temp) await temp.remove().catch(() => {});
+  }
+
+  /** Repete fn com espera crescente; respeita pausa/cancelamento e erros definitivos. */
+  async retrying(it, fn) {
+    for (let attempt = 0; ; ) {
+      await this.gate.wait();
+      if (this.gate.cancelled) throw new CancelledError();
+      try {
+        return await fn();
+      } catch (err) {
+        if (this.gate.cancelled) throw new CancelledError();
+        attempt += 1;
+        if (err?.permanent || attempt > this.retries) throw err;
+        it.error = `Tentando de novo (${attempt}/${this.retries})…`;
+        await this.gate.sleep(this.backoff(attempt));
+        it.error = null;
+      }
+    }
+  }
+
+  /** Baixa um pedaço pequeno inteiro (segmento HLS), com novas tentativas e pausa. */
+  async fetchBytes(it, url, run = { dead: false, controllers: new Set() }) {
+    const stale = () => Object.assign(new Error('Interrompido'), { permanent: true });
+    for (let attempt = 0; ; ) {
+      await this.gate.wait();
+      if (this.gate.cancelled) throw new CancelledError();
+      if (run.dead) throw stale();
+      const ctrl = this.gate.controller();
+      run.controllers.add(ctrl);
+      try {
+        const res = await this.fetchImpl(url, { signal: ctrl.signal, credentials: 'omit', cache: 'no-store' });
+        if (!res.ok) throw new HttpError(res.status);
+        return new Uint8Array(await res.arrayBuffer());
+      } catch (err) {
+        if (this.gate.cancelled) throw new CancelledError();
+        if (run.dead) throw stale();
+        if (isAbort(err) && ctrl.signal.aborted) continue; // pausa
+        attempt += 1;
+        if (err?.permanent || attempt > this.retries) throw err;
+        it.error = `Tentando de novo (${attempt}/${this.retries})…`;
+        await this.gate.sleep(this.backoff(attempt));
+        if (run.dead) throw stale();
+        it.error = null;
+      } finally {
+        this.gate.release(ctrl);
+        run.controllers.delete(ctrl);
+      }
+    }
+  }
+
+  /** Copia o arquivo temporário para o destino. */
+  async copyFile(it, writer) {
+    const reader = it.file.stream().getReader();
+    let chunks = [];
+    let buffered = 0;
+    const flush = async () => {
+      if (!buffered) return;
+      const data = concat(chunks, buffered);
+      chunks = [];
+      buffered = 0;
+      try {
+        await writer.write(data);
+      } catch (err) {
+        if (typeof DOMException !== 'undefined' && err instanceof DOMException) err.disk = true;
+        throw err;
+      }
+    };
+    for (;;) {
+      if (this.gate.cancelled) throw new CancelledError();
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      buffered += value.length;
+      if (buffered >= this.chunkSize) await flush();
+    }
+    await flush();
   }
 
   async transfer(it, writer) {
@@ -392,12 +520,7 @@ function failureReport(items) {
 
 function indexBytes(index, items) {
   const ok = new Set(items.filter((i) => i.status === 'done' || i.status === 'skipped').map((i) => i.path));
-  return encoder.encode(buildOfflineIndex(index, { isOk: (e) => e.kind === 'youtube' || ok.has(e.path) }));
-}
-
-/** Itens do YouTube que estão no índice da execução atual. */
-function externosDe(index) {
-  return index.flatMap((c) => c.disciplinas.flatMap((d) => d.grupos.flatMap((g) => g.itens.filter((e) => e.kind === 'youtube'))));
+  return encoder.encode(buildOfflineIndex(index, { isOk: (e) => ok.has(e.path) }));
 }
 
 const SUBFOLDER_KIND = { Áudio: 'audio', Libras: 'libras', Materiais: 'material' };
@@ -452,34 +575,6 @@ export async function scanTree(base, currentIndex = []) {
   return cursos;
 }
 
-/**
- * Junta ao índice escaneado do disco os vídeos do YouTube da execução atual que ainda não estão
- * na pasta (eles chegam depois, pelo script). Cria curso/disciplina/aula se preciso.
- */
-export function mergeExternos(scanned, current) {
-  for (const c of current) {
-    for (const d of c.disciplinas) {
-      for (const g of d.grupos) {
-        const yt = g.itens.filter((e) => e.kind === 'youtube');
-        if (!yt.length) continue;
-        const [cursoDir, discDir] = g.dir.split('/');
-        let sc = scanned.find((x) => x.nome === cursoDir);
-        if (!sc) scanned.push((sc = { nome: cursoDir, disciplinas: [] }));
-        let sd = sc.disciplinas.find((x) => x.nome === discDir);
-        if (!sd) sc.disciplinas.push((sd = { nome: discDir, grupos: [] }));
-        let sg = sd.grupos.find((x) => x.dir === g.dir);
-        if (!sg) sd.grupos.push((sg = { nome: g.dir.split('/').pop(), dir: g.dir, itens: [], links: g.links || [] }));
-        for (const e of yt) {
-          const i = sg.itens.findIndex((x) => x.path === e.path);
-          if (i >= 0) sg.itens[i] = { ...sg.itens[i], kind: 'youtube', url: e.url, titulo: e.titulo };
-          else sg.itens.push(e);
-        }
-      }
-    }
-  }
-  return scanned;
-}
-
 /** Grava tudo num único .zip escolhido pelo usuário (FileSystemFileHandle). */
 export class ZipTarget {
   constructor(fileHandle, { index = [] } = {}) {
@@ -503,7 +598,8 @@ export class ZipTarget {
   }
 
   isSequential(it) {
-    return it.size == null;
+    // O YouTube é montado à parte e chega com tamanho conhecido: entra em paralelo e reserva a vaga na hora.
+    return it.size == null && it.kind !== 'youtube';
   }
 
   async prepare() {
@@ -512,6 +608,7 @@ export class ZipTarget {
 
   async open(it) {
     const zip = this.zip;
+    if (!it.zipEntry && it.file) it.zipEntry = zip.reserve(it.path, it.file.size);
     const entry = it.zipEntry || zip.beginAppend(it.path);
     const appended = !it.zipEntry;
     return {
@@ -533,11 +630,6 @@ export class ZipTarget {
 
   async finish(items) {
     await this.zip.appendBytes(INDEX_FILE, indexBytes(this.index, items));
-    const externos = externosDe(this.index);
-    if (externos.length) {
-      await this.zip.appendBytes(MAC_SCRIPT, encoder.encode(buildMacScript(externos)), { unixMode: 0o100755 });
-      await this.zip.appendBytes(WIN_SCRIPT, encoder.encode(buildWindowsScript(externos)));
-    }
     const report = failureReport(items);
     if (report) await this.zip.appendBytes(REPORT_FILE, report);
     const end = await this.zip.finish();
@@ -645,19 +737,7 @@ export class DirectoryTarget {
     } catch {
       index = null;
     }
-    const externos = externosDe(this.index);
-    if (index) mergeExternos(index, this.index);
     await this.writeFile(INDEX_FILE, index ? encoder.encode(buildOfflineIndex(index)) : indexBytes(this.index, items));
-    this.scriptWarning = null;
-    if (externos.length) {
-      try {
-        await this.writeFile(MAC_SCRIPT, encoder.encode(buildMacScript(externos)));
-        await this.writeFile(WIN_SCRIPT, encoder.encode(buildWindowsScript(externos)));
-      } catch (err) {
-        // O Chrome pode recusar gravar scripts numa pasta; o ZIP não tem essa limitação.
-        this.scriptWarning = describeError(err);
-      }
-    }
     const report = failureReport(items);
     if (report) await this.writeFile(REPORT_FILE, report);
     else await this.base.removeEntry(REPORT_FILE).catch(() => {});

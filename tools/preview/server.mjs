@@ -61,11 +61,32 @@ function serveMedia(req, res, name) {
   req.on('close', () => clearInterval(timer));
 }
 
+// No preview não existe a regra declarativeNetRequest da extensão: este proxy faz o papel dela
+// (Origin do YouTube) e libera CORS para a página local.
+const UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36';
+async function proxyYouTube(req, res, target) {
+  try {
+    const host = new URL(target).hostname;
+    if (!/(^|\.)(youtube\.com|googlevideo\.com)$/.test(host)) throw new Error('host');
+    const body = req.method === 'POST' ? await new Promise((r) => { const c = []; req.on('data', (d) => c.push(d)); req.on('end', () => r(Buffer.concat(c))); }) : undefined;
+    const headers = { 'User-Agent': UA };
+    for (const h of ['content-type', 'x-youtube-client-name', 'x-youtube-client-version', 'x-goog-visitor-id']) if (req.headers[h]) headers[h] = req.headers[h];
+    if (host.endsWith('youtube.com')) headers.Origin = 'https://www.youtube.com';
+    const r = await fetch(target, { method: req.method, headers, body });
+    res.writeHead(r.status, { 'Content-Type': r.headers.get('content-type') || 'application/octet-stream', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
+    res.end(Buffer.from(await r.arrayBuffer()));
+  } catch (e) {
+    res.writeHead(502);
+    res.end(String(e.message));
+  }
+}
+
 http
   .createServer((req, res) => {
     const url = new URL(req.url, 'http://x');
     const p = decodeURIComponent(url.pathname);
     if (p.startsWith('/__media/')) return serveMedia(req, res, p.slice(9));
+    if (p === '/__yt') return proxyYouTube(req, res, url.searchParams.get('u'));
     if (p === '/__export' && req.method === 'POST') {
       const out = path.join(os.tmpdir(), `ava-preview-${path.basename(url.searchParams.get('name') || 'out.bin')}`);
       const ws = fs.createWriteStream(out);
