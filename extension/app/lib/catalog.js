@@ -464,8 +464,10 @@ export async function loadCatalog(api, { onProgress = () => {}, now = Date.now()
 
   let done = 0;
   onProgress({ done, total: pares.length });
-  const disciplinas = await pool(pares, 4, async ({ sala }) => {
+  const disciplinas = await pool(pares, 4, async ({ curso, sala }) => {
     const disc = await loadDisciplina(api, sala, now);
+    // Num curso encerrado nada está "em andamento", mesmo que as datas da sala digam o contrário.
+    if (curso.encerrado && (disc.status === 'andamento' || disc.status === 'futura')) disc.status = 'anterior';
     done += 1;
     onProgress({ done, total: pares.length, disciplina: disc.nome });
     return disc;

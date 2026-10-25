@@ -8,7 +8,7 @@ import { buildOfflineIndex } from '../extension/app/lib/offline-index.js';
 const NOW = Date.parse('2026-10-25T12:00:00Z');
 
 // Fixture no mesmo formato das respostas reais do AVA (dados fictícios).
-function fakeApi({ failRota = false, session = false } = {}) {
+function fakeApi({ failRota = false, session = false, withClosed = false } = {}) {
   const calls = [];
   const rota = (n) => ({
     curso: 'FILOSOFIA - BACHARELADO',
@@ -29,7 +29,8 @@ function fakeApi({ failRota = false, session = false } = {}) {
     if (session) throw Object.assign(new Error('401'), { status: 401, session: true });
     if (path.startsWith('sistema/Curso/0/EscolaUsuario/true/?emCurso=true'))
       return { cursos: [{ idCurso: 10, idUsuarioCurso: 99, nome: 'BACHARELADO EM FILOSOFIA', nomeCursoNivel: 'GRADUAÇÃO', nomeTipoSituacao: 'ATIVO' }] };
-    if (path.startsWith('sistema/Curso/0/EscolaUsuario/true/?emCurso=false')) return { cursos: [] };
+    if (path.startsWith('sistema/Curso/0/EscolaUsuario/true/?emCurso=false')) return { cursos: withClosed ? [{ idCurso: 30, idUsuarioCurso: 98, nome: 'PROGRAMA CHAVE', nomeTipoSituacao: 'CONCLUINTE' }] : [] };
+    if (path.startsWith('ava/SalaVirtual/30/CursoUsuarioPermissao')) return { salaVirtuais: [{ id: 3, cId: 'qqq', nome: 'Programa Chave', dataInicio: '2026-08-01T00:00:00', dataFim: '2026-12-01T00:00:00', idSalaVirtualOfertaAtual: 650 }] };
     if (path.startsWith('ava/SalaVirtual/10/CursoUsuarioPermissao'))
       return {
         salaVirtuais: [
@@ -216,4 +217,11 @@ test('pastas estáveis: não dependem da seleção e cursos homônimos não se m
   const so2 = buildPlan(cat, { selected: new Set(['v2']) }).entries[0].path;
   const ambos = buildPlan(cat, { selected: new Set(['v1', 'v2']) }).entries.map((e) => e.path);
   assert.ok(ambos.includes(so2), 'mesmo caminho com ou sem o outro curso selecionado');
+});
+
+test('disciplina de curso encerrado nunca aparece como "em andamento"', async () => {
+  const { api } = fakeApi({ withClosed: true });
+  const cat = await loadCatalog(api, { now: NOW });
+  const closed = cat.cursos.find((c) => c.encerrado);
+  assert.equal(closed.disciplinas[0].status, 'anterior');
 });

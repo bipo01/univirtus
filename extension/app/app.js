@@ -833,7 +833,7 @@ function sync() {
     li.classList.toggle('dim', cs.disabled);
     const sz = sizeOfNode(n);
     const sizeEl = $(':scope > .row [data-size]', li);
-    if (sizeEl) sizeEl.textContent = sz.total || !sz.unknown ? formatBytes(sz.total, { approx: sz.unknown > 0 }) : '…';
+    if (sizeEl) sizeEl.textContent = sz.total ? formatBytes(sz.total, { approx: sz.unknown > 0 }) : sz.unknown ? '…' : '—';
     let visible = !hits || hits.has(key);
     if (n.type === 'disc') {
       visible = visible && discVisibleByStatus(n);
