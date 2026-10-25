@@ -1,10 +1,11 @@
 <!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="light">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AVA Downloader</title>
     <link rel="icon" href="../icons/icon-32.png" />
+    <script src="theme.js"></script>
     <link rel="stylesheet" href="app.css" />
   </head>
   <body>
@@ -22,6 +23,9 @@
         <span id="who" class="pill" hidden></span>
         <button id="btn-refresh" class="btn ghost sm" type="button" hidden title="Ler o AVA de novo">
           <span data-icon="refresh"></span><span>Atualizar lista</span>
+        </button>
+        <button id="btn-theme" class="btn ghost sm icon-only" type="button" aria-label="Usar modo escuro" title="Usar modo escuro">
+          <span data-icon="moon"></span>
         </button>
         <button id="btn-settings" class="btn ghost sm icon-only" type="button" aria-haspopup="dialog" aria-label="Configurações">
           <span data-icon="settings"></span>

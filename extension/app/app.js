@@ -1259,6 +1259,23 @@ window.addEventListener('beforeunload', (e) => {
   }
 });
 
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  try {
+    localStorage.setItem('ava-theme', theme);
+  } catch {
+    /* sem armazenamento: vale só nesta aba */
+  }
+  const dark = theme === 'dark';
+  const btn = $('#btn-theme');
+  const label = dark ? 'Usar modo claro' : 'Usar modo escuro';
+  btn.innerHTML = icon(dark ? 'sun' : 'moon', 16);
+  btn.title = label;
+  btn.setAttribute('aria-label', label);
+}
+applyTheme(document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light');
+$('#btn-theme').onclick = () => applyTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark');
+
 $('#btn-refresh').onclick = () => loadAll({ keepSelection: true });
 $('#btn-settings').onclick = () => {
   $('#opt-concurrency').value = String(prefs.concurrency);

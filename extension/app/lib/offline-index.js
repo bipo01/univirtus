@@ -40,14 +40,15 @@ export function buildOfflineIndex(index, { isOk = () => true, geradoEm = new Dat
   const quando = geradoEm.toLocaleString('pt-BR', { dateStyle: 'long', timeStyle: 'short' });
 
   return `<!doctype html>
-<html lang="pt-BR">
+<html lang="pt-BR" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Minhas aulas</title>
 <style>
 :root{--bg:#f6f7fb;--panel:#fff;--text:#141827;--muted:#5d6479;--line:#e4e7ef;--brand:#3b5bdb;--brand-soft:#e8edff;--accent:#f08c00}
-@media (prefers-color-scheme:dark){:root{--bg:#0e1118;--panel:#161a24;--text:#e8ebf3;--muted:#98a0b5;--line:#252b39;--brand:#7c9bff;--brand-soft:#1d2540}}
+:root[data-theme=dark]{color-scheme:dark;--bg:#0e1118;--panel:#161a24;--text:#e8ebf3;--muted:#98a0b5;--line:#252b39;--brand:#7c9bff;--brand-soft:#1d2540}
+#theme{border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:10px;height:40px;padding:0 12px;cursor:pointer;font:inherit}
 *{box-sizing:border-box}body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
 header{padding:20px 24px;border-bottom:1px solid var(--line);background:var(--panel);display:flex;gap:16px;align-items:center;flex-wrap:wrap}
 h1{font-size:20px;margin:0}header p{margin:0;color:var(--muted);font-size:13px}
@@ -70,7 +71,7 @@ video,audio{width:100%;border-radius:12px;background:#000;max-height:70vh}audio{
 </head>
 <body>
 <header><div><h1>Minhas aulas</h1><p>Baixado em ${esc(quando)} · funciona sem internet</p></div>
-<input id="q" type="search" placeholder="Buscar aula ou tema…" aria-label="Buscar"></header>
+<input id="q" type="search" placeholder="Buscar aula ou tema…" aria-label="Buscar"><button id="theme" type="button"></button></header>
 <main><nav id="nav"></nav><section id="view"><p class="empty">Escolha uma aula na lista para começar.</p></section></main>
 <script>
 const DATA=${json};const LBL=${JSON.stringify(KIND_LABEL)};
@@ -85,6 +86,8 @@ if(ul.children.length){gg.append(ul);dd.append(gg);if(n)gg.open=true}}if(any){if
 function play(it,g,d,a){document.querySelectorAll('a.on').forEach(x=>x.classList.remove('on'));a.classList.add('on');view.textContent='';
 const media=h(it.k==='audio'?'audio':'video',{controls:'',autoplay:'',src:it.h});view.append(h('div',{class:'player'},media,h('div',{class:'now'},h('h2',{text:it.t}),h('p',{text:d.n+' · '+g.n}))));
 media.onended=()=>{const all=[...document.querySelectorAll('nav a[data-k]')].filter(x=>x.dataset.k!=='material');const i=all.indexOf(a);if(all[i+1])all[i+1].click()}}
+const th=document.getElementById('theme');function setTheme(t){document.documentElement.dataset.theme=t;th.textContent=t==='dark'?'☀ Modo claro':'☾ Modo escuro';try{localStorage.setItem('ava-theme',t)}catch(e){}}
+let saved='light';try{saved=localStorage.getItem('ava-theme')==='dark'?'dark':'light'}catch(e){}setTheme(saved);th.onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
 q.oninput=()=>render(q.value);render('');
 </script>
 </body>
