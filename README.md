@@ -69,7 +69,7 @@ Não. A extensão não vê nem guarda sua senha. Ela só funciona enquanto você
 O tamanho aparece embaixo, antes de baixar. Uma disciplina com 6 aulas costuma ter de 300 a 600 MB só com os vídeos por tema.
 
 **Posso fechar o navegador no meio?**
-Não feche a aba da extensão até terminar. Se precisar parar, use **Pausar**. No modo **Pasta**, mesmo que feche, é só baixar de novo na mesma pasta: o que já foi baixado é pulado.
+Não feche a aba da extensão até terminar. Se precisar parar, use **Pausar**. Se a aba fechar no meio (ou a extensão for atualizada), na próxima vez que abrir a extensão aparece **Download interrompido**: no modo **Pasta** ele continua de onde parou; no **ZIP**, que só é gravado no final, dá para recomeçar com as mesmas aulas sem escolher tudo de novo.
 
 **Apareceu “Entre no AVA para continuar”.**
 Abra o AVA e faça login. A extensão percebe sozinha e continua.

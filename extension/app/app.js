@@ -3,6 +3,7 @@ import { describeError, DirectoryTarget, DownloadJob, FOLDER_NAME, INDEX_FILE, p
 import { icon } from './lib/icons.js';
 import { fold, prettyCase, safeName } from './lib/naming.js';
 import { buildPlan, DEFAULT_TYPES, gruposDe, summarize, usaCompleta, usaTemas } from './lib/plan.js';
+import { createResumeStore, makeRecord, progressOf } from './lib/resume.js';
 import { formatBytes, formatDuration, plural, pool, sleep } from './lib/util.js';
 import { downloadYouTube, resolveYouTube } from './lib/youtube.js';
 import { ensureYouTubeRule } from './lib/yt-rule.js';
@@ -179,6 +180,9 @@ const tempStore = {
   },
 };
 const TEMP_LOCK = 'ava-downloader-tmp';
+
+// Download em andamento guardado no IndexedDB: se a página morrer no meio, dá para continuar depois.
+const resumeStore = createResumeStore();
 
 // ---------------------------------------------------------------- Conexão com o AVA
 let avaTabId = Number(new URLSearchParams(location.search).get('tab')) || null;
@@ -1068,6 +1072,8 @@ async function probeForTypes() {
 }
 
 // ---------------------------------------------------------------- Download
+const ZIP_TYPES = [{ description: 'Arquivo ZIP', accept: { 'application/zip': ['.zip'] } }];
+
 function suggestedZipName() {
   const plan = currentPlan();
   const discs = [...new Set(plan.entries.map((e) => e.disciplina))];
@@ -1086,7 +1092,7 @@ async function startDownload() {
   try {
     handle =
       format === 'zip'
-        ? await window.showSaveFilePicker({ suggestedName: suggestedZipName(), id: 'ava-zip', startIn: 'downloads', types: [{ description: 'Arquivo ZIP', accept: { 'application/zip': ['.zip'] } }] })
+        ? await window.showSaveFilePicker({ suggestedName: suggestedZipName(), id: 'ava-zip', startIn: 'downloads', types: ZIP_TYPES })
         : await window.showDirectoryPicker({ id: 'ava-pasta', mode: 'readwrite', startIn: 'downloads' });
   } catch (err) {
     if (err?.name !== 'AbortError') toast(describeError(err));
@@ -1095,7 +1101,22 @@ async function startDownload() {
   await runDownload({ handle, format });
 }
 
-async function runDownload({ handle, format, onlyEntries = null }) {
+/** Pede (ou confirma) permissão para gravar num handle guardado de outra vez. */
+async function canWrite(handle) {
+  try {
+    const opts = { mode: 'readwrite' };
+    if ((await handle.queryPermission?.(opts)) === 'granted') return true;
+    return (await handle.requestPermission?.(opts)) === 'granted';
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * @param onlyEntries  só estes itens (tentar de novo os que falharam)
+ * @param resume       registro de um download interrompido: mesma lista, sem passar pela seleção
+ */
+async function runDownload({ handle, format, onlyEntries = null, resume = null }) {
   state.phase = 'download';
   setWho();
   renderPreparing(format, handle);
@@ -1103,7 +1124,11 @@ async function runDownload({ handle, format, onlyEntries = null }) {
   let entries;
   let missing = [];
   try {
-    if (onlyEntries) {
+    if (resume) {
+      entries = resume.entries.map((e) => ({ ...e }));
+      missing = resume.missing || [];
+      state.lastIndex = resume.index || [];
+    } else if (onlyEntries) {
       // Tamanhos podem ter mudado no servidor: confere de novo antes de tentar.
       const files = onlyEntries.filter((e) => e.kind !== 'youtube');
       for (const e of files) sizes.map.delete(e.url);
@@ -1141,6 +1166,26 @@ async function runDownload({ handle, format, onlyEntries = null }) {
   const job = new DownloadJob({ entries, target, concurrency: Number(prefs.concurrency) || 4, youtube: youtubeApi, tempStore });
   state.job = job;
   state.lastRun = { handle, format, missing };
+
+  // Guarda a lista e o destino antes de começar; o progresso é atualizado enquanto baixa.
+  const jobId = crypto.randomUUID();
+  const persisted = await resumeStore
+    .save(makeRecord({ id: jobId, format, handle, entries, index, missing }))
+    .then(() => true)
+    .catch((err) => {
+      console.warn('Não foi possível guardar o download para continuar depois:', err);
+      return false;
+    });
+  if (persisted && resume) resumeStore.remove(resume.id).catch(() => {});
+  let lastProgress = '';
+  const saveProgress = () => {
+    const p = progressOf(job.items);
+    const key = `${p.finished}/${p.failed}`;
+    if (!persisted || key === lastProgress) return;
+    lastProgress = key;
+    resumeStore.progress(jobId, p).catch(() => {});
+  };
+  const progressTimer = setInterval(saveProgress, 2000);
   renderProgress(job, { format, handle, missing });
 
   try {
@@ -1150,12 +1195,17 @@ async function runDownload({ handle, format, onlyEntries = null }) {
   }
   let error = null;
   try {
-    // Enquanto baixa, segura a trava compartilhada: outra aba da extensão não apaga os temporários.
-    if (navigator.locks) await navigator.locks.request(TEMP_LOCK, { mode: 'shared' }, () => job.start());
-    else await job.start();
+    // Enquanto baixa, segura a trava compartilhada (outra aba da extensão não apaga os temporários)
+    // e a deste download (outra aba não o oferece como interrompido).
+    const run = () => resumeStore.hold(jobId, () => job.start());
+    if (navigator.locks) await navigator.locks.request(TEMP_LOCK, { mode: 'shared' }, run);
+    else await run();
   } catch (err) {
     error = err;
   } finally {
+    // Terminou nesta página (pronto, cancelado ou com erro, e o resultado está na tela): não é mais "interrompido".
+    clearInterval(progressTimer);
+    if (persisted) resumeStore.remove(jobId).catch(() => {});
     // Tamanho guardado que não bate mais com o servidor: esquece para a próxima vez.
     for (const it of job.items) if (it.sizeChanged) sizes.map.delete(it.url);
     sizes.persist();
@@ -1211,7 +1261,7 @@ function renderProgress(job, { format, handle }) {
         <div class="stat"><small>Tempo restante</small><b id="st-eta">calculando…</b></div>
         <div class="stat"><small>Falhas</small><b id="st-fail">0</b></div>
       </div>
-      <div class="notice">${icon('info', 18)}<span>Pode usar o computador normalmente, só não feche esta aba até terminar.</span></div>
+      <div class="notice">${icon('info', 18)}<span>${format === 'zip' ? 'Pode usar o computador normalmente, só não feche esta aba até terminar.' : 'Pode usar o computador normalmente. Se esta aba fechar, abra a extensão de novo: o download continua de onde parou.'}</span></div>
     </div>
     <div class="card section"><h2><span>Baixando agora</span><span id="dl-active-n"></span></h2><ul class="files" id="dl-active"></ul></div>
     <div class="card section" id="dl-fail-card" hidden><h2><span>Com problema</span></h2><ul class="files" id="dl-failed"></ul></div>
@@ -1365,7 +1415,7 @@ function renderFinished(job, { format, handle, missing, error }) {
       let target = handle;
       if (format === 'zip') {
         try {
-          target = await window.showSaveFilePicker({ suggestedName: handle.name.replace(/\.zip$/i, '') + ' (faltantes).zip', id: 'ava-zip', types: [{ description: 'Arquivo ZIP', accept: { 'application/zip': ['.zip'] } }] });
+          target = await window.showSaveFilePicker({ suggestedName: handle.name.replace(/\.zip$/i, '') + ' (faltantes).zip', id: 'ava-zip', types: ZIP_TYPES });
         } catch (err) {
           if (err?.name !== 'AbortError') toast(describeError(err));
           return;
@@ -1376,8 +1426,98 @@ function renderFinished(job, { format, handle, missing, error }) {
   }
 }
 
+// ---------------------------------------------------------------- Download interrompido
+function renderResume(rec) {
+  state.phase = 'resume';
+  const zip = rec.format === 'zip';
+  const p = rec.progress || { finished: 0, bytes: 0 };
+  const name = esc(rec.handle.name);
+  const when = new Date(p.at || rec.startedAt).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+  const size = rec.bytes ? ` · ${formatBytes(rec.bytes, { approx: rec.entries.some((e) => e.size == null) })}` : '';
+  const pct = rec.bytes ? Math.min(100, (p.bytes / rec.bytes) * 100) : (p.finished / rec.files) * 100;
+
+  if (zip) {
+    renderState({
+      art: 'archive',
+      tone: 'warn',
+      title: 'Download interrompido',
+      text: `O download de <b>${name}</b> parou em ${when}, antes de terminar. O ZIP só é gravado no final, então o que já tinha baixado não ficou salvo.`,
+      body: `<p class="muted" style="margin-top:14px">As aulas escolhidas estão guardadas (${plural(rec.files, 'arquivo', 'arquivos')}${size}): dá para começar de novo sem marcar tudo outra vez.</p>
+        <div class="notice" style="text-align:left">${icon('folder', 18)}<span>Na <b>Pasta</b>, um download que para no meio continua de onde estava.</span></div>`,
+      actions: `<button class="btn primary lg" id="resume-dir">${icon('folder', 18)}Baixar numa pasta</button>
+        <button class="btn lg" id="resume-zip">${icon('archive', 18)}Baixar o ZIP de novo</button>
+        <button class="btn ghost" id="resume-drop">Descartar</button>`,
+    });
+  } else {
+    renderState({
+      art: 'folder',
+      title: 'Download interrompido',
+      text: `O download para a pasta <b>${name}/${esc(FOLDER_NAME)}</b> parou em ${when}, antes de terminar. O que já foi baixado está salvo: continuando, só o que falta é baixado.`,
+      body: `<div class="bar"><i style="width:${pct.toFixed(1)}%"></i></div>
+        <div class="muted">${p.finished} de ${plural(rec.files, 'arquivo pronto', 'arquivos prontos')}${rec.bytes ? ` · ${formatBytes(p.bytes)} de ${formatBytes(rec.bytes)}` : ''}</div>`,
+      actions: `<button class="btn primary lg" id="resume-go">${icon('resume', 16)}Continuar de onde parou</button>
+        <button class="btn ghost" id="resume-drop">Descartar</button>`,
+    });
+  }
+
+  // Um clique só: a permissão e o seletor de pasta demoram, e um segundo clique iniciaria outro download.
+  let busy = false;
+  const once = (fn) => async () => {
+    if (busy) return;
+    busy = true;
+    try {
+      await fn();
+    } finally {
+      busy = false;
+    }
+  };
+  const pickDir = async () => {
+    try {
+      return await window.showDirectoryPicker({ id: 'ava-pasta', mode: 'readwrite', startIn: 'downloads' });
+    } catch (err) {
+      if (err?.name !== 'AbortError') toast(describeError(err));
+      return null;
+    }
+  };
+  $('#resume-drop').onclick = () => {
+    resumeStore.remove(rec.id).catch(() => {});
+    connect();
+  };
+  if (zip) {
+    $('#resume-zip').onclick = once(async () => {
+      let handle;
+      try {
+        handle = await window.showSaveFilePicker({ suggestedName: rec.handle.name, id: 'ava-zip', startIn: 'downloads', types: ZIP_TYPES });
+      } catch (err) {
+        if (err?.name !== 'AbortError') toast(describeError(err));
+        return;
+      }
+      runDownload({ handle, format: 'zip', resume: rec });
+    });
+    $('#resume-dir').onclick = once(async () => {
+      const handle = await pickDir();
+      if (!handle) return;
+      prefs.format = 'dir';
+      savePrefs();
+      runDownload({ handle, format: 'dir', resume: rec });
+    });
+  } else {
+    $('#resume-go').onclick = once(async () => {
+      let handle = rec.handle;
+      if (!(await canWrite(handle))) {
+        // Permissão negada ou pasta que não existe mais: escolhendo a mesma pasta, o que já está lá é pulado.
+        toast(`Escolha de novo a pasta “${rec.handle.name}” para continuar.`);
+        handle = await pickDir();
+        if (!handle) return;
+      }
+      runDownload({ handle, format: 'dir', resume: rec });
+    });
+  }
+}
+
 function backToSelect() {
   state.job = null;
+  if (!state.catalog) return connect(); // veio direto da tela de download interrompido
   state.phase = 'select';
   renderSelect();
 }
@@ -1436,5 +1576,7 @@ $('#opt-concurrency').onchange = (e) => {
 
 (async function boot() {
   await Promise.all([loadPrefs(), sizes.load(), tempStore.clear(), ensureYouTubeRule().catch(() => {})]);
+  const pending = await resumeStore.interrupted().catch(() => null);
+  if (pending) return renderResume(pending);
   await connect();
 })();
