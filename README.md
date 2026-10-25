@@ -50,7 +50,7 @@ Pronto. Não apague nem mova a pasta depois de instalar: o Chrome usa a extensã
 2. Clique no botão **Baixar aulas** (canto inferior direito do AVA) ou no ícone da extensão.
 3. Tudo já vem marcado. Desmarque o que não quiser, ou use a busca para achar uma aula ou tema.
 4. Em **Incluir**, escolha o formato dos vídeos e o que mais quer:
-   - **Vídeos por tema** *ou* **Aula completa**: é o mesmo conteúdo em dois formatos. Por tema = um vídeo curto para cada assunto (Conversa inicial, Tema 1… Finalizando). Aula completa = a aula inteira num vídeo só. Escolha um; o tamanho total é praticamente o mesmo.
+   - **Vídeos por tema** *ou* **Aula completa**: é o mesmo conteúdo em dois formatos. Por tema = um vídeo curto para cada assunto (Conversa inicial, Tema 1… Finalizando). Aula completa = a aula inteira num vídeo só. Escolha um; o tamanho total é praticamente o mesmo. A extensão sempre abre em **Aula completa**.
    - **PDFs e materiais**: apostilas, roteiros e arquivos das aulas.
    - **Vídeos do YouTube**: vídeos do YouTube que aparecem nas aulas, baixados em MP4.
 

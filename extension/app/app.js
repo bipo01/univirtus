@@ -54,8 +54,9 @@ async function loadPrefs() {
   const { prefs: saved } = await chrome.storage.local.get('prefs');
   if (saved) Object.assign(prefs, saved, { types: { ...DEFAULT_TYPES, ...(saved.types || {}) } });
   // "Por tema" e "Aula completa" são exclusivos (o mesmo conteúdo em dois formatos).
-  if (prefs.types.completo) prefs.types.video = false;
-  else prefs.types.video = true;
+  // Toda vez que a página abre, começa em "Aula completa"; a troca vale só para esta vez.
+  prefs.types.completo = true;
+  prefs.types.video = false;
 }
 const savePrefs = () => chrome.storage.local.set({ prefs });
 

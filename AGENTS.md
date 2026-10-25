@@ -35,7 +35,7 @@ Base `https://univirtus.uninter.com/ava/`. Autenticação: **cookie de sessão +
 ## Regras
 - Nunca faça commit de dados reais de alunos (nomes, RU, CPF, ids de sessão). Fixtures e preview usam dados fictícios. O `index.json` das rotas traz CPF de professor: não guarde nem exiba.
 - Windows: caminho relativo ≤ 190 caracteres (`LIMITS` em `plan.js`: curso 36, disciplina 44, Curso/Disciplina/Aula ≤ 110, arquivo 64), sobrando ~70 para a pasta escolhida dentro do limite de 260 do Explorador. Teste em `catalog.test.mjs`.
-- "Vídeos por tema" e "Aula completa" são exclusivos (radio; `types.video`/`types.completo`); aula sem versão completa usa os temas (`usaTemas`/`usaCompleta` em `plan.js`).
+- "Vídeos por tema" e "Aula completa" são exclusivos (radio; `types.video`/`types.completo`); a página sempre abre em "Aula completa" (pedido do usuário; `loadPrefs` força, a troca não persiste); aula sem versão completa usa os temas (`usaTemas`/`usaCompleta` em `plan.js`).
 - Nomes de arquivo são determinísticos (`plan.js`/`naming.js`): o modo Pasta pula arquivos que já existem com o mesmo tamanho. Mudar o esquema de nomes faz o usuário baixar tudo de novo; só mude com motivo.
 - ZIP: entradas de tamanho conhecido têm posição reservada e são gravadas em paralelo; o cabeçalho local é gravado no fim com o CRC. Falha definitiva completa com zeros e vai para `LEIA-ME - arquivos com erro.txt`, para o ZIP continuar válido. Toda mudança em `zip.js` precisa passar nos testes com Python, `unzip -t` e `ditto`.
 - Erros nunca viram sucesso silencioso: 401 → tela de login; falhas por arquivo aparecem na interface e no relatório.
