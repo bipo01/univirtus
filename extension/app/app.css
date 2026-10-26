@@ -1245,7 +1245,7 @@ dialog h2 {
   display: grid;
   gap: 8px;
 }
-.extra {
+.extras .extra {
   display: grid;
   grid-template-columns: 24px 1fr;
   gap: 10px;
@@ -1254,23 +1254,23 @@ dialog h2 {
   border: 1px solid var(--line);
   cursor: pointer;
 }
-.extra:hover {
+.extras .extra:hover {
   border-color: var(--brand);
 }
-.extra .cb {
+.extras .extra .cb {
   margin-top: 1px;
 }
-.extra b {
+.extras .extra b {
   display: block;
 }
-.extra small {
+.extras .extra small {
   display: block;
   color: var(--text-2);
   font-size: 12.5px;
   margin-top: 2px;
   line-height: 1.45;
 }
-.extra small b {
+.extras .extra small b {
   display: inline;
 }
 .more-opts {
