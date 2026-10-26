@@ -12,6 +12,9 @@ export const REPORT_FILE = 'LEIA-ME - arquivos com erro.txt';
 export const FOLDER_NAME = 'Aulas Uninter';
 
 const encoder = new TextEncoder();
+// Id da extensão (na página da extensão) e da pasta: a página gerada abre pela extensão, que guarda o acesso à pasta.
+const extensionId = () => globalThis.chrome?.runtime?.id || null;
+const newFolderId = () => globalThis.crypto?.randomUUID?.() || `f${Date.now().toString(36)}${Math.random().toString(36).slice(2)}`;
 
 export class HttpError extends Error {
   constructor(status) {
@@ -518,9 +521,9 @@ function failureReport(items) {
   return encoder.encode(lines.join('\r\n'));
 }
 
-function indexBytes(index, items, assets) {
+function indexBytes(index, items, assets, opts = {}) {
   const ok = new Set(items.filter((i) => i.status === 'done' || i.status === 'skipped').map((i) => i.path));
-  return encoder.encode(buildOfflineIndex(index, { isOk: (e) => ok.has(e.path), assets }));
+  return encoder.encode(buildOfflineIndex(index, { ...opts, isOk: (e) => ok.has(e.path), assets }));
 }
 
 async function writeAt(base, path, bytes) {
@@ -763,14 +766,18 @@ export class DirectoryTarget {
     // O índice reflete tudo o que está na pasta, inclusive o que foi baixado em outras vezes.
     // Links e URLs do YouTube de downloads anteriores vêm da página que já estava na pasta.
     let index;
+    let previous = null;
     try {
       const old = await this.base.getFileHandle(INDEX_FILE).then((h) => h.getFile()).then((f) => f.text()).catch(() => null);
-      index = await scanTree(this.base, this.index, old ? readPlayerData(old) : null);
+      previous = old ? readPlayerData(old) : null;
+      index = await scanTree(this.base, this.index, previous);
     } catch {
       index = null;
     }
+    this.folderId = previous?.folderId || newFolderId();
     const assets = this.assets || (await loadPlayerAssets());
-    await writePlayer(this.base, index ? encoder.encode(buildOfflineIndex(index, { assets })) : indexBytes(this.index, items, assets), assets);
+    const opts = { assets, ext: extensionId(), folderId: this.folderId };
+    await writePlayer(this.base, index ? encoder.encode(buildOfflineIndex(index, opts)) : indexBytes(this.index, items, assets, opts), assets);
     const report = failureReport(items);
     if (report) await this.writeFile(REPORT_FILE, report);
     else await this.base.removeEntry(REPORT_FILE).catch(() => {});
@@ -810,8 +817,9 @@ export async function rebuildPlayerPage(picked) {
   const index = await scanTree(base, [], previous);
   if (!index.length) throw new Error('Não encontrei aulas baixadas nesta pasta.');
   const assets = await loadPlayerAssets();
-  await writePlayer(base, encoder.encode(buildOfflineIndex(index, { assets })), assets);
+  const folderId = previous?.folderId || newFolderId();
+  await writePlayer(base, encoder.encode(buildOfflineIndex(index, { assets, ext: extensionId(), folderId })), assets);
   let files = 0;
   for (const c of index) for (const d of c.disciplinas) for (const g of d.grupos) files += g.itens.length;
-  return { folder: base.name, files };
+  return { folder: base.name, files, folderId, handle: base };
 }

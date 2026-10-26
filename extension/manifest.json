@@ -47,5 +47,16 @@
       ],
       "run_at": "document_idle"
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "app/watch.html",
+        "icons/icon-16.png"
+      ],
+      "matches": [
+        "file:///*"
+      ]
+    }
   ]
 }

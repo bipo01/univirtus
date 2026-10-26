@@ -8,8 +8,8 @@ Extensão Chrome MV3 que baixa em lote as videoaulas e materiais do AVA Univirtu
   - `background.js` — abre/foca a página `app/app.html?tab=<aba do AVA>`.
   - `content/content.js` — roda no AVA: ponte `ava:api`/`ava:ping` e botão flutuante (Shadow DOM).
   - `app/` — interface (`app.html/css/js`) e núcleo em `app/lib/` (testável em Node).
-  - `app/player/` — player offline (`player.js` + `player.css`) que o `offline-index.js` embute em "Assistir aulas.html".
-  - `vendor/pdfjs/` — pdf.js 3.11.174 (build legado UMD, Apache-2.0), copiado para `%storage%/app/` junto com a página.
+  - `app/player/` — player (`player.js`, `player.css`, `merge.js`, `doc-reader.js`). O `offline-index.js` embute em "Assistir aulas.html"; `app/watch.html` + `watch.js` rodam o mesmo player dentro da extensão.
+  - `vendor/` — pdf.js 3.11.174 (UMD, Apache-2.0), JSZip 3.10.1 + docx-preview 0.3.5 (prévia de .docx). Copiados para `%storage%/app/<mesmo caminho>` junto com a página.
 - `tests/*.test.mjs` — `node:test`. `tests/helpers.mjs` simula CDN (HEAD/Range/falhas) e FileSystem handles.
 - `tools/preview/` — preview da interface com `chrome.*` simulado e dados **fictícios**; `tools/make-icons.py` gera os PNGs.
 
@@ -46,9 +46,11 @@ Base `https://univirtus.uninter.com/ava/`. Autenticação: **cookie de sessão +
 - Não faça chamadas em massa sem limite ao AVA: a página limita a 10 simultâneas.
 
 ## Página "Assistir aulas.html" (player offline)
-- Abre por `file://` (duplo clique), sem internet e sem módulos ES (o Chrome bloqueia `type=module` e `fetch` em `file://`). Os dados vão em `<script type="application/json" id="ava-data">` (`playerData`: caminho real `p` é a chave de tudo); o player é um script clássico. Nada de `</script` no `player.js` (há teste).
+- **Com a extensão instalada, nada para escolher:** a extensão guarda o handle da pasta (IndexedDB `ava-folders`, `lib/folders.js`) quando baixa em Pasta ou quando o aluno usa "Atualizar numa pasta já baixada". A página da pasta leva `ext` (id da extensão) e `folderId` nos dados; ao abrir por `file://` ela testa `chrome-extension://<ext>/icons/icon-16.png` (web_accessible_resources só para `file:///*`) e, se a extensão responde, vai para `app/watch.html?f=<folderId>`. Lá o player roda com `window.AVA_HOST` (lista montada por `scanTree` na hora, vídeos/arquivos lidos pelo handle como blob). Se o Chrome não tiver a permissão guardada, a tela pede um clique ("Abrir minhas aulas" → `requestPermission`; o Chrome oferece "Permitir em todas as visitas"). `?local` na página da pasta força o modo `file://`. O `folderId` é mantido entre regenerações (`readPlayerData`).
+- Sem a extensão (outro computador), abre por `file://` (duplo clique), sem internet e sem módulos ES (o Chrome bloqueia `type=module` e `fetch` em `file://`). Os dados vão em `<script type="application/json" id="ava-data">` (`playerData`: caminho real `p` é a chave de tudo); o player é um script clássico. Nada de `</script` no `player.js` (há teste).
 - Progresso, destaques e notas: `localStorage` (`ava-player:<pasta>`) sempre; e `%storage%/dados.json` na pasta das aulas depois que o aluno escolhe a pasta (`showDirectoryPicker`; o handle fica no IndexedDB `ava-player`, e o Chrome pede permissão de novo a cada visita). Gravação junta com o disco antes (registros com `at`, apagados viram lápide `del`) e gera `%storage%/Minhas anotações.md`.
 - PDF: só com a pasta conectada (é o único jeito de ler os bytes em `file://`). pdf.js carrega de `%storage%/app/pdf.min.js` por `<script>`; o worker vem de um Blob lido pela pasta (se falhar, o pdf.js roda na página). Sempre `isEvalSupported: false` (CVE-2024-4367). Destaques guardam retângulos normalizados (0–1) por página.
-- Outros materiais (docx, pptx…) não têm link: clicar num `file://` não renderizável faz o Chrome baixar uma cópia. A página mostra o caminho para abrir pelo sistema.
+- Word: `.docx` pelo docx-preview (fiel: imagens, tabelas, cores); `.doc` (Word 97–2003) pelo `doc-reader.js` próprio ([MS-CFB] + [MS-DOC]: peças do CLX, FKPs de parágrafo/caractere → texto, negrito/itálico/sublinhado, tamanho, alinhamento, tabelas; sem imagens). Também aceita UTF-8 nas peças de 8 bits (arquivos do TextEdit/Pages). Fixture: `tests/fixtures/doc/ficha.doc` (gerada com `textutil`).
+- Outros materiais (pptx, xlsx…) não têm link: clicar num `file://` não renderizável faz o Chrome baixar uma cópia. A página mostra o caminho para abrir pelo sistema.
 - `%storage%` é ignorado pelo `scanTree`. A extensão nunca apaga nem sobrescreve `dados.json`; só reescreve a página, `%storage%/app/*` e `LEIA-ME.txt`.
 - "Atualizar numa pasta já baixada" (Mais opções → `rebuildPlayerPage`): regera só a página a partir dos arquivos; links e URLs do YouTube saem da página anterior (`readPlayerData` lê o formato novo e o antigo `const DATA=`).

@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import vm from 'node:vm';
+import fs from 'node:fs';
 import { INDEX_FILE, rebuildPlayerPage } from '../extension/app/lib/downloader.js';
 import { buildOfflineIndex, loadPlayerAssets, playerData, readPlayerData } from '../extension/app/lib/offline-index.js';
 import { memoryDir } from './helpers.mjs';
@@ -51,10 +52,16 @@ const legacyPage = (links) => {
 };
 
 test('player: o script embutido é JS válido e nunca fecha o <script> da página', async () => {
-  const { js, css, merge, files } = await loadPlayerAssets();
-  assert.doesNotThrow(() => new vm.Script(`${merge}\n${js}`, { filename: 'player.js' }));
-  assert.ok(!/<\/script/i.test(js + merge) && !/<\/style/i.test(css));
-  assert.deepEqual(files.map((f) => f.path).sort(), ['%storage%/LEIA-ME.txt', '%storage%/app/pdf.min.js', '%storage%/app/pdf.worker.min.js']);
+  const { js, css, merge, doc, files } = await loadPlayerAssets();
+  assert.doesNotThrow(() => new vm.Script(`${merge}\n${doc}\n${js}`, { filename: 'player.js' }));
+  assert.ok(!/<\/script/i.test(js + merge + doc) && !/<\/style/i.test(css));
+  assert.deepEqual(files.map((f) => f.path).sort(), [
+    '%storage%/LEIA-ME.txt',
+    '%storage%/app/docx/docx-preview.min.js',
+    '%storage%/app/docx/jszip.min.js',
+    '%storage%/app/pdfjs/pdf.min.js',
+    '%storage%/app/pdfjs/pdf.worker.min.js',
+  ]);
 });
 
 test('player: dados embutidos com "</script>" no título não quebram a página', async () => {
@@ -77,7 +84,10 @@ test('Atualizar só a página: lê a pasta, mantém links/YouTube da página ant
 
   // Aceita a pasta de cima (onde "Aulas Uninter" está).
   const r = await rebuildPlayerPage(root);
-  assert.deepEqual(r, { folder: 'Aulas Uninter', files: 5 });
+  assert.equal(r.folder, 'Aulas Uninter');
+  assert.equal(r.files, 5);
+  assert.equal(r.handle, base, 'devolve a pasta para a extensão lembrar');
+  assert.match(r.folderId, /^[\w-]{8,}$/);
 
   const html = dec.decode(read(base, INDEX_FILE).data);
   const data = embedded(html);
@@ -96,10 +106,12 @@ test('Atualizar só a página: lê a pasta, mantém links/YouTube da página ant
   );
   assert.equal(g.i.find((i) => i.k === 'youtube').u, 'https://www.youtube.com/watch?v=abc');
   assert.equal(dec.decode(read(base, '%storage%/dados.json').data), '{"v":1,"items":{"x":{"done":true}}}', 'dados do aluno intactos');
-  assert.ok(read(base, '%storage%/app/pdf.min.js').data.length > 100_000);
+  assert.ok(read(base, '%storage%/app/pdfjs/pdf.min.js').data.length > 100_000);
+  assert.equal(data.folderId, r.folderId);
 
-  // Rodar de novo (agora sobre o formato novo) dá o mesmo resultado.
-  await rebuildPlayerPage(base);
+  // Rodar de novo (agora sobre o formato novo) dá o mesmo resultado e mantém o id da pasta.
+  const r2 = await rebuildPlayerPage(base);
+  assert.equal(r2.folderId, r.folderId, 'mesmo id: a extensão continua reconhecendo a pasta');
   assert.deepEqual(embedded(dec.decode(read(base, INDEX_FILE).data)).cursos, data.cursos);
 });
 
@@ -172,4 +184,24 @@ test('merge: mantém campos de versões futuras e o "last" mais recente', async 
   assert.equal(m.v, 2);
   assert.deepEqual(m.extra, { x: 1 });
   assert.equal(m.last.path, 'b');
+});
+
+test('leitor de .doc: texto com acentos, negrito, alinhamento e tabela', async () => {
+  const { doc } = await loadPlayerAssets();
+  const AvaDoc = vm.runInNewContext(`${doc}\nAvaDoc`, { TextDecoder });
+  const { blocks } = JSON.parse(JSON.stringify(AvaDoc.parse(new Uint8Array(fs.readFileSync(new URL('./fixtures/doc/ficha.doc', import.meta.url))))));
+  const text = (p) => p.runs.map((r) => r.text).join('');
+  assert.equal(blocks[0].type, 'p');
+  assert.equal(text(blocks[0]), 'FICHA DE FREQUÊNCIA');
+  assert.equal(blocks[0].align, 'center');
+  assert.ok(blocks[0].runs.every((r) => r.b), 'título em negrito');
+  assert.equal(text(blocks[1]), 'Nome do aluno: Fulano de Tal — ação e reflexão.');
+  assert.ok(blocks[1].runs.some((r) => r.i && r.text === 'Fulano de Tal'));
+  const table = blocks.find((b) => b.type === 'table');
+  assert.deepEqual(table.rows.map((row) => row.map((cell) => cell.map(text).join('/'))), [
+    ['Data', 'Atividade', 'Horas'],
+    ['01/03', 'Entrevista', '4'],
+    ['02/03', '', '2'],
+  ]);
+  assert.throws(() => AvaDoc.parse(new Uint8Array(600)), /não é um \.doc/);
 });

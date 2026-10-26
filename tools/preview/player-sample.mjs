@@ -1,9 +1,12 @@
 // Monta uma pasta de aulas FICTÍCIA para testar a página "Assistir aulas.html" (player offline):
 //   node tools/preview/player-sample.mjs [destino]
 // Padrão: tools/preview/out/player-sample/Aulas Uninter. Abra o "Assistir aulas.html" de lá no Chrome.
-// Vídeos de 4 s (remontados das fixtures do YouTube), PDFs com texto de verdade e um .docx de mentira.
+// Vídeos de 4 s (remontados das fixtures do YouTube), PDFs com texto, um .doc (fixture) e um .docx
+// (gerado pelo textutil do macOS, se existir). AVA_EXT_ID=<id> grava o id da extensão na página (redireciona).
 
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseAdts } from '../../extension/app/lib/media/adts.js';
@@ -11,6 +14,7 @@ import { Mp4Muxer } from '../../extension/app/lib/media/mp4.js';
 import { TsVideoDemuxer } from '../../extension/app/lib/media/ts.js';
 import { rebuildPlayerPage, INDEX_FILE } from '../../extension/app/lib/downloader.js';
 
+if (process.env.AVA_EXT_ID) globalThis.chrome = { runtime: { id: process.env.AVA_EXT_ID } };
 const here = path.dirname(fileURLToPath(import.meta.url));
 const base = path.resolve(process.argv[2] || path.join(here, 'out/player-sample/Aulas Uninter'));
 const FIX = path.join(here, '../../tests/fixtures/hls');
@@ -129,6 +133,19 @@ async function makeMp4() {
   return buf;
 }
 
+/** .docx de verdade pelo textutil (macOS); em outros sistemas, um arquivo inválido (a prévia mostra o erro). */
+function makeDocx() {
+  const html = `<html><head><meta charset="utf-8"></head><body><h1 style="text-align:center">Roteiro de estudos</h1><p><b>Objetivo:</b> ler os textos da aula e responder às questões.</p><ol><li>Leia o texto base.</li><li>Assista à aula completa.</li><li>Faça as anotações no leitor.</li></ol><table border="1"><tr><th>Semana</th><th>Atividade</th></tr><tr><td>1</td><td>Leitura</td></tr><tr><td>2</td><td>Fórum</td></tr></table></body></html>`;
+  try {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ava-docx-'));
+    fs.writeFileSync(path.join(dir, 'r.html'), html);
+    execFileSync('textutil', ['-convert', 'docx', path.join(dir, 'r.html'), '-output', path.join(dir, 'r.docx')]);
+    return fs.readFileSync(path.join(dir, 'r.docx'));
+  } catch {
+    return Buffer.from('PK fictício');
+  }
+}
+
 const LOREM = [
   'A filosofia da religião investiga os conceitos centrais das tradições religiosas,',
   'como Deus, fé, revelação, milagre e sentido da vida, com as ferramentas da razão.',
@@ -155,7 +172,9 @@ put(`${D1}/Aula 01 - Introdução/02 - Tema 1 – O que é filosofia.mp4`, mp4);
 put(`${D1}/Aula 01 - Introdução/03 - Tema 2 – O que é religião.mp4`, mp4);
 put(`${D1}/Aula 01 - Introdução/Áudio/01 - Conversa Inicial.m4a`, mp4);
 put(`${D1}/Aula 01 - Introdução/Materiais/Slides da aula 1.pdf`, makePdf('Slides da aula 1', Array.from({ length: 7 }, () => LOREM)));
-put(`${D1}/Aula 01 - Introdução/Materiais/Roteiro de estudos.docx`, Buffer.from('PK fictício'));
+put(`${D1}/Aula 01 - Introdução/Materiais/Ficha de frequência.doc`, fs.readFileSync(path.join(here, '../../tests/fixtures/doc/ficha.doc')));
+put(`${D1}/Aula 01 - Introdução/Materiais/Roteiro de estudos.docx`, makeDocx());
+put(`${D1}/Aula 01 - Introdução/Materiais/Mapa conceitual.pptx`, Buffer.from('PK fictício'));
 put(`${D1}/Aula 02 - Argumentos clássicos/00 - Aula completa.mp4`, mp4);
 put(`${D1}/Aula 02 - Argumentos clássicos/Materiais/Texto base.pdf`, makePdf('Texto base', Array.from({ length: 12 }, () => LOREM)));
 put(`${D1}/Material complementar/Plano de ensino - FILOSOFIA DA RELIGIAO.pdf`, makePdf('Plano de ensino', [LOREM, LOREM]));
@@ -167,4 +186,4 @@ const old = [{ n: C, d: [{ n: 'Filosofia da Religião', g: [{ n: 'Aula 01 - Intr
 put(INDEX_FILE, `<script>const DATA=${JSON.stringify(old)};const LBL={};</script>`);
 
 const r = await rebuildPlayerPage(nodeDir(base));
-console.log(`${r.files} arquivos · ${path.join(base, INDEX_FILE)}`);
+console.log(`${r.files} arquivos · pasta ${r.folderId} · ${path.join(base, INDEX_FILE)}`);

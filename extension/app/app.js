@@ -4,6 +4,7 @@ import { icon } from './lib/icons.js';
 import { fold, prettyCase, safeName } from './lib/naming.js';
 import { buildPlan, DEFAULT_TYPES, gruposDe, summarize, usaCompleta, usaTemas } from './lib/plan.js';
 import { createResumeStore, makeRecord, progressOf } from './lib/resume.js';
+import { listFolders, rememberFolder } from './lib/folders.js';
 import { formatBytes, formatDuration, plural, pool, sleep } from './lib/util.js';
 import { downloadYouTube, resolveYouTube } from './lib/youtube.js';
 import { ensureYouTubeRule } from './lib/yt-rule.js';
@@ -1215,7 +1216,20 @@ async function runDownload({ handle, format, onlyEntries = null, resume = null }
       /* nada */
     }
   }
-  renderFinished(job, { format, handle, missing, error });
+  // A pasta fica registrada: "Assistir aulas" abre pela extensão, sem pedir a pasta de novo.
+  if (format !== 'zip' && target.folderId && target.base) await rememberFolder(target.folderId, target.base).then(showWatchButton, () => {});
+  renderFinished(job, { format, handle, missing, error, folderId: format !== 'zip' ? target.folderId : null });
+}
+
+/** Abre "Assistir aulas" dentro da extensão (ela já tem acesso à pasta). */
+function openWatch(folderId) {
+  chrome.tabs.create({ url: chrome.runtime.getURL(`app/watch.html${folderId ? `?f=${encodeURIComponent(folderId)}` : ''}`) });
+}
+async function showWatchButton() {
+  const known = await listFolders().catch(() => []);
+  const b = $('#btn-watch');
+  b.hidden = !known.length;
+  b.onclick = () => openWatch(known[0]?.id);
 }
 
 let prepEl = null;
@@ -1359,7 +1373,7 @@ function renderFailedList(failed) {
     .join('');
 }
 
-function renderFinished(job, { format, handle, missing, error }) {
+function renderFinished(job, { format, handle, missing, error, folderId = null }) {
   document.title = 'AVA Downloader';
   const s = job.snapshot();
   const elapsed = (s.finishedAt - s.startedAt) / 1000;
@@ -1400,7 +1414,8 @@ function renderFinished(job, { format, handle, missing, error }) {
       ${partial ? `<div class="notice warn">${icon('alert', 18)}<span>${plural(s.counts.failed, 'arquivo não pôde', 'arquivos não puderam')} ser baixado${s.counts.failed > 1 ? 's' : ''}. ${format === 'zip' ? 'Eles estão listados no arquivo “LEIA-ME” dentro do ZIP.' : 'Tente de novo: o que já foi baixado não é baixado outra vez.'}</span></div>` : ''}
       ${missing.length ? `<div class="notice warn">${icon('info', 18)}<span>${plural(missing.length, 'item não está mais disponível', 'itens não estão mais disponíveis')} (removido do servidor ou vídeo privado no YouTube) e ${missing.length > 1 ? 'ficaram' : 'ficou'} de fora.</span></div>` : ''}
       <div class="cta">
-        <button class="btn primary lg" id="more">${icon('download', 18)}Baixar mais aulas</button>
+        ${folderId ? `<button class="btn primary lg" id="watch-now">${icon('play', 18)}Assistir aulas</button>` : ''}
+        <button class="btn ${folderId ? '' : 'primary '}lg" id="more">${icon('download', 18)}Baixar mais aulas</button>
         ${partial ? `<button class="btn lg" id="retry-failed">${icon('refresh', 18)}Tentar de novo os que falharam</button>` : ''}
       </div>
     </div>
@@ -1408,6 +1423,7 @@ function renderFinished(job, { format, handle, missing, error }) {
   </section>`;
   renderFailedList(s.failed);
   $('#more').onclick = backToSelect;
+  if (folderId) $('#watch-now').onclick = () => openWatch(folderId);
   const retry = $('#retry-failed');
   if (retry) {
     retry.onclick = async () => {
@@ -1589,7 +1605,10 @@ $('#btn-rebuild').onclick = async () => {
   btn.disabled = true;
   try {
     const r = await rebuildPlayerPage(handle);
-    toast(`Pronto! Abra “${INDEX_FILE}” na pasta ${r.folder} (${plural(r.files, 'arquivo', 'arquivos')}).`, 7000);
+    await rememberFolder(r.folderId, r.handle);
+    showWatchButton();
+    toast(`Pronto! Página atualizada (${plural(r.files, 'arquivo', 'arquivos')}). Abrindo suas aulas…`, 7000);
+    openWatch(r.folderId);
   } catch (err) {
     toast(describeError(err), 7000);
   } finally {
@@ -1601,6 +1620,7 @@ $('#opt-concurrency').onchange = (e) => {
   savePrefs();
 };
 
+showWatchButton();
 (async function boot() {
   await Promise.all([loadPrefs(), sizes.load(), tempStore.clear(), ensureYouTubeRule().catch(() => {})]);
   const pending = await resumeStore.interrupted().catch(() => null);

@@ -18,14 +18,14 @@ const STORAGE_README = [
   '',
   '- dados.json: aulas concluídas, onde você parou, destaques e notas (não apague).',
   '- Minhas anotações.md: cópia das suas notas e destaques para ler em qualquer editor.',
-  '- app/: leitor de PDF usado pela página (funciona sem internet).',
+  '- app/: leitores de PDF e Word usados pela página (funcionam sem internet).',
   '',
   'Se mover a pasta das aulas para outro lugar ou outro computador, leve esta pasta junto.',
   '',
 ].join('\r\n');
 
 /** Dados que vão embutidos na página: só o que existe de fato na pasta/ZIP. */
-export function playerData(index, { isOk = () => true, geradoEm = new Date() } = {}) {
+export function playerData(index, { isOk = () => true, geradoEm = new Date(), ext = null, folderId = null } = {}) {
   const cursos = index
     .map((curso) => ({
       n: curso.nome,
@@ -47,7 +47,8 @@ export function playerData(index, { isOk = () => true, geradoEm = new Date() } =
         .filter((d) => d.g.length),
     }))
     .filter((c) => c.d.length);
-  return { v: 2, geradoEm: geradoEm.toISOString(), storage: STORAGE_DIR, cursos };
+  // ext + folderId: com a extensão instalada, a página abre por ela (que já tem acesso à pasta).
+  return { v: 2, geradoEm: geradoEm.toISOString(), storage: STORAGE_DIR, ...(folderId ? { folderId } : {}), ...(ext ? { ext } : {}), cursos };
 }
 
 /**
@@ -55,10 +56,10 @@ export function playerData(index, { isOk = () => true, geradoEm = new Date() } =
  * @param isOk    (entry) => boolean — só lista o que realmente está na pasta/ZIP
  * @param assets  loadPlayerAssets()
  */
-export function buildOfflineIndex(index, { isOk = () => true, geradoEm = new Date(), assets } = {}) {
-  if (!assets?.js || !assets?.css || !assets?.merge) throw new Error('buildOfflineIndex: faltam os arquivos do player (loadPlayerAssets)');
-  // "<" vira <: o JSON nunca fecha o <script> antes da hora.
-  const json = JSON.stringify(playerData(index, { isOk, geradoEm })).replace(/</g, '\\u003c');
+export function buildOfflineIndex(index, { isOk = () => true, geradoEm = new Date(), assets, ext = null, folderId = null } = {}) {
+  if (!assets?.js || !assets?.css || !assets?.merge || !assets?.doc) throw new Error('buildOfflineIndex: faltam os arquivos do player (loadPlayerAssets)');
+  // Todo "<" vira o escape unicode: o JSON nunca fecha o <script> antes da hora.
+  const json = JSON.stringify(playerData(index, { isOk, geradoEm, ext, folderId })).replace(/</g, '\\u003c');
   return `<!doctype html>
 <html lang="pt-BR">
 <head>
@@ -77,6 +78,7 @@ ${assets.css}
 <script type="application/json" id="ava-data">${json}</script>
 <script>
 ${assets.merge}
+${assets.doc}
 ${assets.js}
 </script>
 </body>
@@ -86,12 +88,16 @@ ${assets.js}
 
 /** Lê os dados embutidos numa página gerada antes (formato novo ou o antigo), para não perder links e URLs do YouTube. */
 export function readPlayerData(html) {
-  const out = { links: new Map(), urls: new Map() };
+  const out = { links: new Map(), urls: new Map(), folderId: null };
   let cursos = null;
   let legacy = false;
   const now = /<script type="application\/json" id="ava-data">([\s\S]*?)<\/script>/.exec(html);
   try {
-    if (now) cursos = JSON.parse(now[1]).cursos;
+    if (now) {
+      const d = JSON.parse(now[1]);
+      cursos = d.cursos;
+      out.folderId = typeof d.folderId === 'string' ? d.folderId : null;
+    }
     else {
       const old = /const DATA=(\[[\s\S]*?\]);const LBL=/.exec(html);
       if (old) {
@@ -130,10 +136,11 @@ export function readPlayerData(html) {
 const PLAYER_SOURCES = {
   css: '../player/player.css',
   merge: '../player/merge.js',
+  doc: '../player/doc-reader.js',
   js: '../player/player.js',
-  pdf: '../../vendor/pdfjs/pdf.min.js',
-  worker: '../../vendor/pdfjs/pdf.worker.min.js',
 };
+// Bibliotecas copiadas para %storage%/app/ com o mesmo caminho de extension/vendor/ (o player usa os dois).
+export const VENDOR_FILES = ['pdfjs/pdf.min.js', 'pdfjs/pdf.worker.min.js', 'docx/jszip.min.js', 'docx/docx-preview.min.js'];
 
 let assetsPromise = null;
 
@@ -150,15 +157,15 @@ export function loadPlayerAssets() {
       if (!r.ok) throw new Error(`Não consegui ler ${rel} (${r.status})`);
       return new Uint8Array(await r.arrayBuffer());
     };
-    const [css, merge, js, pdf, worker] = await Promise.all(Object.values(PLAYER_SOURCES).map(read));
+    const [css, merge, doc, js, ...vendor] = await Promise.all([...Object.values(PLAYER_SOURCES), ...VENDOR_FILES.map((f) => `../../vendor/${f}`)].map(read));
     const dec = new TextDecoder();
     return {
       css: dec.decode(css),
       merge: dec.decode(merge),
+      doc: dec.decode(doc),
       js: dec.decode(js),
       files: [
-        { path: `${STORAGE_DIR}/app/pdf.min.js`, bytes: pdf },
-        { path: `${STORAGE_DIR}/app/pdf.worker.min.js`, bytes: worker },
+        ...VENDOR_FILES.map((f, i) => ({ path: `${STORAGE_DIR}/app/${f}`, bytes: vendor[i] })),
         { path: `${STORAGE_DIR}/LEIA-ME.txt`, bytes: new TextEncoder().encode(STORAGE_README) },
       ],
     };

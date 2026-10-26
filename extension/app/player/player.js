@@ -1,22 +1,28 @@
-/* Player offline "Assistir aulas.html" — embutido na página pelo offline-index.js.
- * Roda em file:// (duplo clique), sem internet e sem módulos. Os dados do aluno (progresso,
- * destaques, notas) ficam no localStorage e, depois que a pasta é conectada, em %storage%/dados.json. */
+/* Player "Assistir aulas" — o mesmo código roda em dois lugares:
+ * - na página "Assistir aulas.html" da pasta (file://, duplo clique), embutido pelo offline-index.js;
+ * - dentro da extensão (app/watch.html), que já tem acesso à pasta: window.AVA_HOST = { data, handle, folderId, vendor }.
+ * Com a extensão instalada, a página da pasta abre a versão da extensão sozinha (nada para escolher).
+ * Os dados do aluno (progresso, destaques, notas) ficam em %storage%/dados.json na pasta e no localStorage. */
 (() => {
   'use strict';
 
-  const RAW = JSON.parse(document.getElementById('ava-data').textContent);
+  const HOST = window.AVA_HOST || null;
+  const RAW = HOST ? HOST.data : JSON.parse(document.getElementById('ava-data').textContent);
   const STORAGE = RAW.storage || '%storage%';
   const INDEX_FILE = 'Assistir aulas.html';
   const enc = (p) => p.split('/').map(encodeURIComponent).join('/');
-  const STORAGE_HREF = enc(STORAGE);
-  const folderPath = (() => {
-    try {
-      return decodeURIComponent(location.pathname).replace(/\/[^/]*$/, '');
-    } catch {
-      return location.pathname.replace(/\/[^/]*$/, '');
-    }
-  })();
-  const folderName = folderPath.split('/').filter(Boolean).pop() || 'Aulas';
+  // pdf.js e leitor de .docx: na extensão, de extension/vendor; na pasta, da cópia em %storage%/app.
+  const LIB = HOST ? HOST.vendor : `${enc(STORAGE)}/app`;
+  const folderPath = HOST
+    ? `ext:${HOST.folderId}`
+    : (() => {
+        try {
+          return decodeURIComponent(location.pathname).replace(/\/[^/]*$/, '');
+        } catch {
+          return location.pathname.replace(/\/[^/]*$/, '');
+        }
+      })();
+  const folderName = HOST ? HOST.handle.name : folderPath.split('/').filter(Boolean).pop() || 'Aulas';
 
   // ------------------------------------------------------------------ utilidades
   const $ = (s, r = document) => r.querySelector(s);
@@ -208,6 +214,8 @@
     audio: new Set(['mp3', 'm4a', 'aac', 'wav', 'ogg', 'oga', 'opus', 'flac']),
     image: new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'avif']),
     text: new Set(['txt', 'md', 'csv', 'json', 'xml', 'srt', 'vtt']),
+    docx: new Set(['docx', 'docm', 'dotx']),
+    doc: new Set(['doc', 'dot']),
   };
   const COLORS = [
     { id: 'yellow', name: 'Amarelo' },
@@ -234,7 +242,7 @@
         for (const i of g.i || []) {
           const ext = (/\.([a-z0-9]+)$/i.exec(i.p) || [])[1]?.toLowerCase() || '';
           let view = i.k === 'audio' ? 'audio' : 'video';
-          if (i.k === 'material') view = ext === 'pdf' ? 'pdf' : EXT.video.has(ext) ? 'video' : EXT.audio.has(ext) ? 'audio' : EXT.image.has(ext) ? 'image' : EXT.text.has(ext) ? 'text' : 'file';
+          if (i.k === 'material') view = ext === 'pdf' ? 'pdf' : EXT.docx.has(ext) ? 'docx' : EXT.doc.has(ext) ? 'doc' : EXT.video.has(ext) ? 'video' : EXT.audio.has(ext) ? 'audio' : EXT.image.has(ext) ? 'image' : EXT.text.has(ext) ? 'text' : 'file';
           const it = { path: i.p, title: i.t, kind: i.k, url: i.u || null, ext, view, href: enc(i.p), aula, disc, curso, order: M.items.length };
           aula.items.push(it);
           M.items.push(it);
@@ -433,6 +441,11 @@
     lastSaved: 0,
     error: null,
     async init() {
+      if (HOST) {
+        this.handle = HOST.handle;
+        await this.ready();
+        return;
+      }
       if (!('showDirectoryPicker' in window)) {
         this.state = 'unsupported';
         return;
@@ -455,6 +468,13 @@
     },
     /** Precisa de um clique do usuário (o navegador exige). */
     async connect({ pick = true } = {}) {
+      if (HOST) {
+        // Na extensão a pasta já é conhecida: só confirma a permissão, nunca pede para escolher.
+        try {
+          if ((await this.handle.requestPermission({ mode: 'readwrite' })) === 'granted') return this.ready();
+        } catch {}
+        return false;
+      }
       if (this.state === 'unsupported') {
         toast('Para salvar na pasta e abrir PDFs aqui, use o Google Chrome ou o Microsoft Edge.');
         return false;
@@ -806,7 +826,7 @@
         h(
           'div',
           { class: 'modal-actions' },
-          h(
+          HOST ? null : h(
             'button',
             {
               class: 'btn',
@@ -1171,6 +1191,7 @@
     if (isMedia(it)) showMedia(it);
     else if (it.view === 'pdf') showPdf(it);
     else if (it.view === 'image') showImage(it);
+    else if (it.view === 'docx' || it.view === 'doc') showWord(it);
     else showFile(it);
   }
   window.addEventListener('hashchange', route);
@@ -1397,7 +1418,18 @@
     const v = document.createElement(audio ? 'audio' : 'video');
     v.preload = 'metadata';
     v.playsInline = true;
-    v.src = it.href;
+    let objUrl = null;
+    if (HOST)
+      Folder.file(it.path).then(
+        (f) => {
+          if (destroyed) return;
+          objUrl = URL.createObjectURL(f);
+          v.src = objUrl;
+          v.play().catch(() => {});
+        },
+        () => v.dispatchEvent(new Event('error')),
+      );
+    else v.src = it.href;
     v.volume = clamp(prefs.volume, 0, 1);
     v.muted = prefs.muted;
     const st0 = Store.st(it.path);
@@ -1838,6 +1870,7 @@
         v.pause();
         v.removeAttribute('src');
         v.load();
+        if (objUrl) URL.revokeObjectURL(objUrl);
       },
     };
   }
@@ -2005,6 +2038,7 @@
   const tb = (ic, title, fn, label) => h('button', { class: 'tb', type: 'button', title, 'aria-label': title, onclick: fn }, icon(ic), label ? h('span', { class: 'hide-sm', text: label }) : null);
 
   function fullPath(it) {
+    if (HOST) return `${folderName}/${it.path}`;
     const p = `${folderPath}/${it.path}`;
     return /^\/[A-Za-z]:/.test(p) ? p.slice(1).replace(/\//g, '\\') : p;
   }
@@ -2054,16 +2088,16 @@
   }
   function loadPdfJs() {
     pdfjsP ??= (async () => {
-      if (!window.pdfjsLib) await loadScript(`${STORAGE_HREF}/app/pdf.min.js`);
+      if (!window.pdfjsLib) await loadScript(`${LIB}/pdfjs/pdf.min.js`);
       const lib = window.pdfjsLib;
       if (!lib) throw new Error('pdf.js');
-      // Worker de verdade a partir de um Blob (file:// não deixa criar Worker por caminho); se falhar, o pdf.js roda na página.
-      try {
-        const wf = await Folder.file(`${STORAGE}/app/pdf.worker.min.js`);
-        lib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob([await wf.arrayBuffer()], { type: 'text/javascript' }));
-      } catch {
-        lib.GlobalWorkerOptions.workerSrc = `${STORAGE_HREF}/app/pdf.worker.min.js`;
-      }
+      lib.GlobalWorkerOptions.workerSrc = `${LIB}/pdfjs/pdf.worker.min.js`;
+      // Em file:// não dá para criar Worker por caminho: Worker a partir de um Blob; se falhar, o pdf.js roda na página.
+      if (!HOST)
+        try {
+          const wf = await Folder.file(`${STORAGE}/app/pdfjs/pdf.worker.min.js`);
+          lib.GlobalWorkerOptions.workerSrc = URL.createObjectURL(new Blob([await wf.arrayBuffer()], { type: 'text/javascript' }));
+        } catch {}
       return lib;
     })().catch((err) => {
       pdfjsP = null;
@@ -2072,33 +2106,27 @@
     return pdfjsP;
   }
 
-  async function showPdf(it) {
-    const token = viewToken;
-    const jump = takeJump(it);
-    content.className = 'content flush';
-    const root = h('div', { class: 'dv' });
-    content.append(root);
-    const bar = simpleBar(it);
-    view = { destroy: bar.destroy };
+  /** Lê o arquivo da pasta para o leitor (PDF/Word). Sem acesso à pasta, mostra como liberar e devolve null. */
+  async function folderBytes(it, { root, bar, token, what }) {
     const msg = (o) => root.replaceChildren(bar.el, dvMsg(o));
-
     if (Folder.state === 'unsupported') {
       return msg({
         title: 'Abra no Google Chrome ou no Microsoft Edge',
-        text: 'O leitor com destaques e notas precisa ler os arquivos da pasta, e só esses navegadores permitem isso numa página aberta do computador.',
-        actions: [h('a', { class: 'btn', href: it.href, target: '_blank', rel: 'noopener' }, icon('external'), 'Abrir o PDF neste navegador')],
+        text: `A prévia precisa ler os arquivos da pasta, e só esses navegadores permitem isso numa página aberta do computador.`,
+        actions: it.view === 'pdf' ? [h('a', { class: 'btn', href: it.href, target: '_blank', rel: 'noopener' }, icon('external'), 'Abrir o PDF neste navegador')] : [],
       });
+      return null;
     }
     if (Folder.state !== 'ready' && Folder.state === 'prompt' && navigator.userActivation?.isActive) await Folder.connect({ pick: false });
-    if (token !== viewToken) return;
+    if (token !== viewToken) return null;
     if (Folder.state !== 'ready') {
-      const prompt = Folder.state === 'prompt';
-      return msg({
+      const prompt = Folder.state === 'prompt' || HOST;
+      msg({
         ic: 'book',
-        title: prompt ? 'Libere o acesso à pasta para abrir o PDF' : 'Abra os PDFs aqui, com destaques e notas',
+        title: prompt ? `Libere o acesso à pasta para abrir ${what}` : `Abra ${what} aqui, sem baixar nada`,
         text: prompt
-          ? 'Por segurança, o navegador pede a sua permissão de novo a cada vez que esta página é aberta.'
-          : h('span', {}, 'O navegador só deixa esta página ler os PDFs depois que você escolhe a pasta das aulas ', h('b', { text: 'uma vez' }), '. Nada é baixado nem copiado: o PDF abre direto da pasta.'),
+          ? 'Por segurança, o Chrome pede uma confirmação para a página usar a pasta. Escolha “Permitir em todas as visitas” e ele não pergunta mais.'
+          : h('span', {}, 'O navegador só deixa esta página ler os arquivos depois que você escolhe a pasta das aulas ', h('b', { text: 'uma vez' }), '. Com a extensão AVA Downloader instalada, nem isso: use “Atualizar numa pasta já baixada” e a página passa a abrir pela extensão.'),
         extra: prompt ? [] : [h('ol', { class: 'steps' }, h('li', { text: 'Clique em “Escolher a pasta”.' }), h('li', {}, 'Selecione a pasta ', h('b', { text: `“${folderName}”` }), ' (onde está este arquivo).'), h('li', { text: 'Confirme “Permitir” quando o navegador perguntar.' }))],
         actions: [
           h(
@@ -2115,27 +2143,43 @@
           ),
         ],
       });
+      return null;
     }
 
-    root.replaceChildren(bar.el, h('div', { class: 'dv-msg' }, h('div', { class: 'vp-spin', style: { display: 'block', position: 'static', margin: '0', borderColor: 'var(--line)', borderTopColor: 'var(--brand)' } }), h('p', { text: 'Abrindo o PDF…' })));
-    let data;
+    root.replaceChildren(bar.el, h('div', { class: 'dv-msg' }, h('div', { class: 'vp-spin', style: { display: 'block', position: 'static', margin: '0', borderColor: 'var(--line)', borderTopColor: 'var(--brand)' } }), h('p', { text: `Abrindo ${what}…` })));
     try {
-      data = new Uint8Array(await (await Folder.file(it.path)).arrayBuffer());
+      const data = new Uint8Array(await (await Folder.file(it.path)).arrayBuffer());
+      return token === viewToken ? data : null;
     } catch (err) {
-      if (token !== viewToken) return;
+      if (token !== viewToken) return null;
       if (err?.name === 'NotAllowedError') {
         Folder.state = 'prompt';
         renderStore();
-        return route();
+        route();
+        return null;
       }
-      return msg({ ic: 'alert', title: 'Não encontrei este arquivo na pasta', text: 'Ele pode ter sido movido, renomeado ou apagado.', extra: [h('code', { text: fullPath(it) })] });
+      msg({ ic: 'alert', title: 'Não encontrei este arquivo na pasta', text: 'Ele pode ter sido movido, renomeado ou apagado.', extra: [h('code', { text: fullPath(it) })] });
+      return null;
     }
+  }
+
+  async function showPdf(it) {
+    const token = viewToken;
+    const jump = takeJump(it);
+    content.className = 'content flush';
+    const root = h('div', { class: 'dv' });
+    content.append(root);
+    const bar = simpleBar(it);
+    view = { destroy: bar.destroy };
+    const msg = (o) => root.replaceChildren(bar.el, dvMsg(o));
+    const data = await folderBytes(it, { root, bar, token, what: 'o PDF' });
+    if (!data) return;
     let lib;
     try {
       lib = await loadPdfJs();
     } catch {
       if (token !== viewToken) return;
-      return msg({ ic: 'alert', title: 'Falta o leitor de PDF nesta pasta', text: `A pasta “${STORAGE}/app” não está aqui. Na extensão AVA Downloader, use “Atualizar a página Assistir aulas” nesta pasta.` });
+      return msg({ ic: 'alert', title: 'Falta o leitor de PDF nesta pasta', text: `A pasta “${STORAGE}/app” está incompleta. Na extensão AVA Downloader, use “Mais opções → Atualizar numa pasta já baixada”.` });
     }
     if (token !== viewToken) return;
     let doc;
@@ -2959,10 +3003,120 @@
     };
   }
 
+  // ------------------------------------------------------------------ Word (.docx e .doc)
+  /** .doc antigo → páginas em HTML (texto, tabelas, negrito/itálico, alinhamento). */
+  function renderDoc(blocks) {
+    let page = h('div', { class: 'docpage' });
+    const pages = [page];
+    const para = (p) => {
+      const el = h('p', { style: { textAlign: p.align || 'left' } });
+      for (const r of p.runs) {
+        r.text.split('\n').forEach((t, i) => {
+          if (i) el.append(h('br'));
+          if (!t) return;
+          const sp = h('span', { text: t });
+          if (r.b) sp.style.fontWeight = '700';
+          if (r.i) sp.style.fontStyle = 'italic';
+          const deco = [r.u && 'underline', r.s && 'line-through'].filter(Boolean).join(' ');
+          if (deco) sp.style.textDecoration = deco;
+          if (r.size) sp.style.fontSize = `${clamp(r.size, 6, 48)}pt`;
+          el.append(sp);
+        });
+      }
+      if (!el.textContent.trim()) el.classList.add('empty');
+      return el;
+    };
+    for (const b of blocks) {
+      if (b.type === 'break') {
+        page = h('div', { class: 'docpage' });
+        pages.push(page);
+      } else if (b.type === 'p') page.append(para(b));
+      else page.append(h('table', { class: 'doctable' }, h('tbody', {}, b.rows.map((row) => h('tr', {}, row.map((cell) => h('td', {}, cell.map(para))))))));
+    }
+    return h('div', { class: 'docwrap' }, pages.filter((pg) => pg.childNodes.length), h('p', { class: 'docnote', text: 'Prévia de arquivo .doc: texto, tabelas e formatação básica. Imagens e caixas de texto não aparecem.' }));
+  }
+
+  async function showWord(it) {
+    const token = viewToken;
+    content.className = 'content flush';
+    const root = h('div', { class: 'dv' });
+    content.append(root);
+    let zoom = prefs.wordZoom || 1;
+    const zoomLbl = h('span', { class: 'zoom-lbl' });
+    const inner = h('div', { class: 'word-zoom' });
+    const stage = h('div', { class: 'word-stage', tabindex: '0', 'aria-label': `Documento: ${it.title}` }, inner);
+    const setZoom = (z) => {
+      zoom = clamp(Math.round(z * 100) / 100, 0.4, 3);
+      prefs.wordZoom = zoom;
+      savePrefs();
+      inner.style.zoom = String(zoom);
+      zoomLbl.textContent = `${Math.round(zoom * 100)}%`;
+    };
+    const fs = () => (document.fullscreenElement ? document.exitFullscreen() : root.requestFullscreen()).catch(() => {});
+    const bar = simpleBar(it, [h('div', { class: 'grp' }, tb('minus', 'Diminuir (−)', () => setZoom(zoom / 1.15)), zoomLbl, tb('plus', 'Aumentar (+)', () => setZoom(zoom * 1.15))), tb('full', 'Tela cheia (F)', fs), h('div', { class: 'vsep' })]);
+    let readTimer = 0;
+    view = {
+      destroy: () => {
+        bar.destroy();
+        clearTimeout(readTimer);
+      },
+      key: (e) => {
+        if (e.ctrlKey || e.metaKey || e.altKey) return false;
+        if (e.key === '+' || e.key === '=') setZoom(zoom * 1.15);
+        else if (e.key === '-' || e.key === '_') setZoom(zoom / 1.15);
+        else if (e.key === '0') setZoom(1);
+        else if (e.key === 'f' || e.key === 'F') fs();
+        else return false;
+        return true;
+      },
+    };
+    setZoom(zoom);
+    const data = await folderBytes(it, { root, bar, token, what: 'o documento' });
+    if (!data) return;
+    root.replaceChildren(bar.el, stage);
+    inner.replaceChildren(h('div', { class: 'dv-msg' }, h('p', { text: 'Montando a prévia…' })));
+    try {
+      if (it.view === 'docx') {
+        if (!window.JSZip) await loadScript(`${LIB}/docx/jszip.min.js`);
+        if (!window.docx) await loadScript(`${LIB}/docx/docx-preview.min.js`);
+        if (token !== viewToken) return;
+        const style = h('div');
+        const body = h('div');
+        await window.docx.renderAsync(data, body, style, { className: 'docx', inWrapper: true, ignoreLastRenderedPageBreak: true, renderHeaders: true, renderFooters: true, renderFootnotes: true, useBase64URL: true });
+        if (token !== viewToken) return;
+        inner.replaceChildren(style, body);
+      } else {
+        inner.replaceChildren(renderDoc(AvaDoc.parse(data).blocks));
+      }
+    } catch (err) {
+      if (token !== viewToken) return;
+      root.replaceChildren(bar.el, dvMsg({ ic: 'alert', title: 'Não consegui mostrar este documento', text: err?.message && /[áéíóúãõç]/i.test(err.message) ? err.message : 'O arquivo pode estar corrompido ou num formato que a prévia não entende.', extra: [h('code', { text: fullPath(it) })] }));
+      return;
+    }
+    stage.focus({ preventScroll: true });
+    // Rolou até o fim e ficou lá: conta como lido.
+    stage.addEventListener('scroll', () => {
+      clearTimeout(readTimer);
+      if (isDone(it) || stage.scrollTop + stage.clientHeight < stage.scrollHeight - 40) return;
+      readTimer = setTimeout(() => {
+        if (token !== viewToken || isDone(it)) return;
+        const undo = setDone(it, true);
+        toast('Material marcado como lido.', { action: 'Desfazer', onAction: undo });
+      }, 3000);
+    });
+  }
+
   // ------------------------------------------------------------------ imagens e outros arquivos
   function showImage(it) {
     content.className = 'content flush';
-    const img = h('img', { src: it.href, alt: it.title });
+    const img = h('img', { alt: it.title });
+    let objUrl = null;
+    if (HOST)
+      Folder.file(it.path).then(
+        (f) => (img.src = objUrl = URL.createObjectURL(f)),
+        () => img.onerror?.(),
+      );
+    else img.src = it.href;
     const stageI = h('div', { class: 'img-stage' }, img);
     img.onclick = () => stageI.classList.toggle('zoom');
     const root = h('div', { class: 'dv' });
@@ -2972,7 +3126,10 @@
     root.append(bar.el, stageI);
     content.append(root);
     view = {
-      destroy: bar.destroy,
+      destroy: () => {
+        bar.destroy();
+        if (objUrl) URL.revokeObjectURL(objUrl);
+      },
       key: (e) => {
         if (e.key === 'f' || e.key === 'F') return fs(), true;
         return false;
@@ -3117,13 +3274,36 @@
     if (d) ui.open.add(d.id);
     if (last) ui.open.add(last.aula.id);
   }
-  renderSeg();
-  renderStore();
-  renderTree();
-  Folder.init()
-    .catch(() => {})
-    .finally(() => {
-      renderStore();
-      route();
-    });
+  function boot() {
+    app.style.visibility = '';
+    renderSeg();
+    renderStore();
+    renderTree();
+    Folder.init()
+      .catch(() => {})
+      .finally(() => {
+        renderStore();
+        route();
+      });
+  }
+  // Página aberta da pasta com a extensão instalada: abre a versão da extensão, que já tem acesso à pasta
+  // (sem escolher nada). Sem a extensão (outro computador), segue aqui mesmo. "?local" força ficar aqui.
+  if (!HOST && location.protocol === 'file:' && RAW.ext && RAW.folderId && !new URLSearchParams(location.search).has('local')) {
+    app.style.visibility = 'hidden';
+    let settled = false;
+    const stay = () => {
+      if (settled) return;
+      settled = true;
+      boot();
+    };
+    const probe = new Image();
+    probe.onload = () => {
+      if (settled) return;
+      settled = true;
+      location.replace(`chrome-extension://${RAW.ext}/app/watch.html?f=${encodeURIComponent(RAW.folderId)}${location.hash}`);
+    };
+    probe.onerror = stay;
+    setTimeout(stay, 1500);
+    probe.src = `chrome-extension://${RAW.ext}/icons/icon-16.png`;
+  } else boot();
 })();
