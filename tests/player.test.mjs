@@ -205,3 +205,45 @@ test('leitor de .doc: texto com acentos, negrito, alinhamento e tabela', async (
   ]);
   assert.throws(() => AvaDoc.parse(new Uint8Array(600)), /não é um \.doc/);
 });
+
+test('player: append/replaceChildren nunca recebem algo opcional (viraria o texto "null" na tela)', async () => {
+  // Regressão: "13:22null" na dica da barra do vídeo e "null" solto abaixo do título da aula.
+  const { js } = await loadPlayerAssets();
+  const bad = [];
+  const re = /\.(append|replaceChildren|prepend|replaceWith|before|after)\(/g;
+  for (let m; (m = re.exec(js)); ) {
+    // Lê os argumentos de primeiro nível da chamada (respeitando parênteses, colchetes e strings).
+    let i = m.index + m[0].length;
+    let depth = 0;
+    let q = null;
+    let arg = '';
+    const args = [];
+    for (; i < js.length; i++) {
+      const c = js[i];
+      if (q) {
+        arg += c;
+        if (c === '\\') arg += js[++i];
+        else if (c === q) q = null;
+        continue;
+      }
+      if (c === "'" || c === '"' || c === '`') q = c;
+      else if ('([{'.includes(c)) depth++;
+      else if (')]}'.includes(c)) {
+        if (depth === 0) break;
+        depth--;
+      } else if (c === ',' && depth === 0) {
+        args.push(arg);
+        arg = '';
+        continue;
+      }
+      arg += c;
+    }
+    args.push(arg);
+    const line = js.slice(0, m.index).split('\n').length;
+    for (const a of args.map((x) => x.trim()).filter(Boolean)) {
+      const top = a.replace(/\([^()]*\)/g, '()'); // ignora o que está dentro de chamadas aninhadas
+      if (/:\s*(null|false|undefined)$/.test(a) || /&&/.test(top.replace(/\(.*\)/gs, ''))) bad.push(`player.js:${line} ${m[1]}(… ${a.slice(0, 60)} …)`);
+    }
+  }
+  assert.deepEqual(bad, [], 'use add()/fill() para filhos opcionais');
+});

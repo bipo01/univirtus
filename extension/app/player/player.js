@@ -43,6 +43,10 @@
     for (const c of kids.flat(3)) if (c != null && c !== false) e.append(c.nodeType ? c : String(c));
     return e;
   }
+  // append/replaceChildren do DOM escrevem "null" na tela se recebem null: use estes quando algo é opcional.
+  const present = (kids) => kids.flat(3).filter((c) => c != null && c !== false);
+  const add = (el, ...kids) => el.append(...present(kids));
+  const fill = (el, ...kids) => el.replaceChildren(...present(kids));
   function svgEl(tag, attrs = {}) {
     const e = document.createElementNS(SVG, tag);
     for (const k in attrs) e.setAttribute(k, attrs[k]);
@@ -1392,7 +1396,8 @@
       chips.push(h('span', { text: alts.length ? ' · Materiais:' : 'Materiais desta aula:' }));
       for (const m of mats.slice(0, 6)) chips.push(h('button', { class: 'alt', type: 'button', title: m.title, onclick: () => go(m), style: { color: 'var(--doc)' } }, icon('doc'), m.title.length > 34 ? m.title.slice(0, 32) + '…' : m.title));
     }
-    wrap.append(
+    add(
+      wrap,
       player.el,
       h(
         'div',
@@ -1602,7 +1607,7 @@
       tip.style.left = `${clamp(f * 100, 4, 96)}%`;
       const t = f * d;
       const near = notesNear(t, d);
-      tip.replaceChildren(fmtTime(t), near ? h('small', { text: near.text }) : null);
+      fill(tip, fmtTime(t), near ? h('small', { text: near.text }) : null);
       if (dragging) {
         prog.style.width = `${f * 100}%`;
         knob.style.left = `${f * 100}%`;
