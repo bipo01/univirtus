@@ -1,21 +1,32 @@
 // Gera "Assistir aulas.html": uma página offline, sem internet, que lista tudo o que foi
 // baixado e toca os vídeos/áudios direto da pasta (abre com duplo clique no navegador).
+//
+// O player (interface, leitor de PDF com destaques e notas, progresso) fica em app/player/ e é
+// embutido na página. O pdf.js vai para "%storage%/app/" e só carrega ao abrir um PDF. O progresso,
+// os destaques e as notas que o aluno faz ficam em "%storage%/dados.json", na própria pasta.
 
-const esc = (s) =>
-  String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+export const STORAGE_DIR = '%storage%';
+export const DATA_FILE = `${STORAGE_DIR}/dados.json`;
 
 export const relHref = (path) => path.split('/').map(encodeURIComponent).join('/');
 
-const KIND_LABEL = { video: 'Vídeo', completo: 'Aula completa', audio: 'Áudio', libras: 'Libras', material: 'Material', youtube: 'YouTube' };
 const KIND_ORDER = { completo: 0, video: 1, youtube: 2, libras: 3, audio: 4, material: 5 };
 const byKind = (a, b) => (KIND_ORDER[a.kind] ?? 9) - (KIND_ORDER[b.kind] ?? 9);
 
-/**
- * @param index   plan.index
- * @param isOk    (entry) => boolean — só lista o que realmente está na pasta/ZIP
- */
-export function buildOfflineIndex(index, { isOk = () => true, geradoEm = new Date() } = {}) {
-  const data = index
+const STORAGE_README = [
+  'Esta pasta guarda o seu progresso, os destaques e as notas da página "Assistir aulas.html".',
+  '',
+  '- dados.json: aulas concluídas, onde você parou, destaques e notas (não apague).',
+  '- Minhas anotações.md: cópia das suas notas e destaques para ler em qualquer editor.',
+  '- app/: leitor de PDF usado pela página (funciona sem internet).',
+  '',
+  'Se mover a pasta das aulas para outro lugar ou outro computador, leve esta pasta junto.',
+  '',
+].join('\r\n');
+
+/** Dados que vão embutidos na página: só o que existe de fato na pasta/ZIP. */
+export function playerData(index, { isOk = () => true, geradoEm = new Date() } = {}) {
+  const cursos = index
     .map((curso) => ({
       n: curso.nome,
       d: curso.disciplinas
@@ -24,10 +35,11 @@ export function buildOfflineIndex(index, { isOk = () => true, geradoEm = new Dat
           g: disc.grupos
             .map((g) => ({
               n: g.nome,
+              ...(g.dir ? { dir: g.dir } : {}),
               i: g.itens
                 .filter(isOk)
                 .sort(byKind)
-                .map((e) => ({ t: e.titulo, k: e.kind, h: relHref(e.path), ...(e.url && e.kind === 'youtube' ? { u: e.url } : {}) })),
+                .map((e) => ({ t: e.titulo, k: e.kind, p: e.path, ...(e.url && e.kind === 'youtube' ? { u: e.url } : {}) })),
               l: (g.links || []).map((l) => ({ t: l.titulo, h: l.url })),
             }))
             .filter((g) => g.i.length || g.l.length),
@@ -35,64 +47,124 @@ export function buildOfflineIndex(index, { isOk = () => true, geradoEm = new Dat
         .filter((d) => d.g.length),
     }))
     .filter((c) => c.d.length);
+  return { v: 2, geradoEm: geradoEm.toISOString(), storage: STORAGE_DIR, cursos };
+}
 
-  const json = JSON.stringify(data).replace(/</g, '\\u003c');
-  const quando = geradoEm.toLocaleString('pt-BR', { dateStyle: 'long', timeStyle: 'short' });
-
+/**
+ * @param index   plan.index (ou scanTree)
+ * @param isOk    (entry) => boolean — só lista o que realmente está na pasta/ZIP
+ * @param assets  loadPlayerAssets()
+ */
+export function buildOfflineIndex(index, { isOk = () => true, geradoEm = new Date(), assets } = {}) {
+  if (!assets?.js || !assets?.css || !assets?.merge) throw new Error('buildOfflineIndex: faltam os arquivos do player (loadPlayerAssets)');
+  // "<" vira <: o JSON nunca fecha o <script> antes da hora.
+  const json = JSON.stringify(playerData(index, { isOk, geradoEm })).replace(/</g, '\\u003c');
   return `<!doctype html>
-<html lang="pt-BR" data-theme="light">
+<html lang="pt-BR">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
 <title>Minhas aulas</title>
+<script>try{var t=localStorage.getItem('ava-theme');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t}catch(e){}</script>
 <style>
-:root{--bg:#f6f7fb;--panel:#fff;--text:#141827;--muted:#5d6479;--line:#e4e7ef;--brand:#3b5bdb;--brand-soft:#e8edff;--accent:#f08c00}
-:root[data-theme=dark]{color-scheme:dark;--bg:#0e1118;--panel:#161a24;--text:#e8ebf3;--muted:#98a0b5;--line:#252b39;--brand:#7c9bff;--brand-soft:#1d2540}
-#theme{border:1px solid var(--line);background:var(--bg);color:var(--text);border-radius:10px;height:40px;padding:0 12px;cursor:pointer;font:inherit}
-*{box-sizing:border-box}body{margin:0;font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text)}
-header{padding:20px 24px;border-bottom:1px solid var(--line);background:var(--panel);display:flex;gap:16px;align-items:center;flex-wrap:wrap}
-h1{font-size:20px;margin:0}header p{margin:0;color:var(--muted);font-size:13px}
-input{flex:1;min-width:200px;max-width:420px;margin-left:auto;padding:10px 14px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}
-main{display:grid;grid-template-columns:minmax(280px,420px) 1fr;gap:0;height:calc(100vh - 77px)}
-nav{overflow:auto;border-right:1px solid var(--line);padding:12px}
-section{padding:24px;overflow:auto}
-details{border-radius:12px;margin:4px 0}summary{cursor:pointer;padding:8px 10px;border-radius:10px;font-weight:600;list-style:none}
-summary:hover{background:var(--brand-soft)}summary::before{content:"▸";display:inline-block;width:1.2em;transition:transform .15s}details[open]>summary::before{transform:rotate(90deg)}
-.disc>summary{font-size:15px}.grp{margin-left:14px}.grp>summary{font-weight:500;color:var(--muted)}
-ul{list-style:none;margin:0 0 6px 28px;padding:0}li a{display:flex;gap:8px;padding:6px 10px;border-radius:8px;color:var(--text);text-decoration:none;font-size:14px}
-li a:hover,li a.on{background:var(--brand-soft);color:var(--brand)}li a small{margin-left:auto;color:var(--muted);font-size:11px;text-transform:uppercase;letter-spacing:.04em}
-.curso{font-size:12px;text-transform:uppercase;letter-spacing:.08em;color:var(--accent);margin:12px 10px 4px}
-.player{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;max-width:1100px}
-video,audio{width:100%;border-radius:12px;background:#000;max-height:70vh}audio{background:none}
-.now h2{margin:12px 4px 2px;font-size:18px}.now p{margin:0 4px;color:var(--muted)}
-.empty{color:var(--muted);text-align:center;margin-top:20vh}
-.yt{padding:28px;border-radius:12px;background:var(--brand-soft)}.yt p{margin:0 0 12px}.yt a{color:var(--brand);font-weight:600}
-@media (max-width:800px){main{grid-template-columns:1fr;height:auto}nav{border-right:0;border-bottom:1px solid var(--line);max-height:50vh}}
+${assets.css}
 </style>
 </head>
 <body>
-<header><div><h1>Minhas aulas</h1><p>Baixado em ${esc(quando)} · funciona sem internet</p></div>
-<input id="q" type="search" placeholder="Buscar aula ou tema…" aria-label="Buscar"><button id="theme" type="button"></button></header>
-<main><nav id="nav"></nav><section id="view"><p class="empty">Escolha uma aula na lista para começar.</p></section></main>
+<div id="app" aria-busy="true"></div>
+<noscript><p style="padding:24px">Ative o JavaScript para ver as aulas.</p></noscript>
+<script type="application/json" id="ava-data">${json}</script>
 <script>
-const DATA=${json};const LBL=${JSON.stringify(KIND_LABEL)};
-const nav=document.getElementById('nav'),view=document.getElementById('view'),q=document.getElementById('q');
-const h=(t,a={},...c)=>{const e=document.createElement(t);for(const k in a)k==='text'?e.textContent=a[k]:e.setAttribute(k,a[k]);e.append(...c);return e};
-function render(f){nav.textContent='';const n=(f||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase();const m=s=>!n||String(s).normalize('NFD').replace(/[\\u0300-\\u036f]/g,'').toLowerCase().includes(n);
-for(const c of DATA){if(DATA.length>1)nav.append(h('div',{class:'curso',text:c.n}));for(const d of c.d){const dd=h('details',{class:'disc'});dd.append(h('summary',{text:d.n}));let any=false;
-for(const g of d.g){const gg=h('details',{class:'grp'});gg.append(h('summary',{text:g.n}));const ul=h('ul');
-for(const it of g.i){if(!(m(d.n)||m(g.n)||m(it.t)))continue;const a=h('a',{href:it.h,'data-k':it.k},h('span',{text:it.t}),h('small',{text:LBL[it.k]||''}));a.onclick=ev=>{if(it.k==='material')return;ev.preventDefault();play(it,g,d,a)};ul.append(h('li',{},a));any=true}
-for(const l of g.l){if(!(m(d.n)||m(g.n)||m(l.t)))continue;ul.append(h('li',{},h('a',{href:l.h,target:'_blank',rel:'noopener'},h('span',{text:'↗ '+l.t}),h('small',{text:'link'}))));any=true}
-if(ul.children.length){gg.append(ul);dd.append(gg);if(n)gg.open=true}}if(any){if(n)dd.open=true;nav.append(dd)}}}}
-function play(it,g,d,a){document.querySelectorAll('a.on').forEach(x=>x.classList.remove('on'));a.classList.add('on');view.textContent='';
-const media=h(it.k==='audio'?'audio':'video',{controls:'',autoplay:'',src:it.h});const info=h('div',{class:'now'},h('h2',{text:it.t}),h('p',{text:d.n+' · '+g.n}));view.append(h('div',{class:'player'},media,info));
-if(it.u)media.onerror=()=>{media.replaceWith(h('div',{class:'yt'},h('p',{text:'Este vídeo do YouTube ainda não foi baixado. Rode o arquivo “Baixar vídeos do YouTube” desta pasta, ou assista online:'}),h('a',{href:it.u,target:'_blank',rel:'noopener',text:'Abrir no YouTube ↗'})))};
-media.onended=()=>{const all=[...document.querySelectorAll('nav a[data-k]')].filter(x=>x.dataset.k!=='material');const i=all.indexOf(a);if(all[i+1])all[i+1].click()}}
-const th=document.getElementById('theme');function setTheme(t){document.documentElement.dataset.theme=t;th.textContent=t==='dark'?'☀ Modo claro':'☾ Modo escuro';try{localStorage.setItem('ava-theme',t)}catch(e){}}
-let saved='light';try{saved=localStorage.getItem('ava-theme')==='dark'?'dark':'light'}catch(e){}setTheme(saved);th.onclick=()=>setTheme(document.documentElement.dataset.theme==='dark'?'light':'dark');
-q.oninput=()=>render(q.value);render('');
+${assets.merge}
+${assets.js}
 </script>
 </body>
 </html>
 `;
+}
+
+/** Lê os dados embutidos numa página gerada antes (formato novo ou o antigo), para não perder links e URLs do YouTube. */
+export function readPlayerData(html) {
+  const out = { links: new Map(), urls: new Map() };
+  let cursos = null;
+  let legacy = false;
+  const now = /<script type="application\/json" id="ava-data">([\s\S]*?)<\/script>/.exec(html);
+  try {
+    if (now) cursos = JSON.parse(now[1]).cursos;
+    else {
+      const old = /const DATA=(\[[\s\S]*?\]);const LBL=/.exec(html);
+      if (old) {
+        cursos = JSON.parse(old[1]);
+        legacy = true;
+      }
+    }
+  } catch {
+    return out;
+  }
+  if (!Array.isArray(cursos)) return out;
+  const decode = (h) => {
+    try {
+      return h.split('/').map(decodeURIComponent).join('/');
+    } catch {
+      return null;
+    }
+  };
+  for (const c of cursos)
+    for (const d of c.d || [])
+      for (const g of d.g || []) {
+        const paths = (g.i || []).map((it) => (legacy ? decode(it.h || '') : it.p)).filter(Boolean);
+        (g.i || []).forEach((it) => {
+          const p = legacy ? decode(it.h || '') : it.p;
+          if (p && it.u) out.urls.set(p, it.u);
+        });
+        // A pasta da aula: a gravada, ou a do primeiro arquivo (sem a subpasta Materiais/Áudio/Libras).
+        let dir = g.dir;
+        if (!dir && paths.length) dir = paths[0].split('/').slice(0, 3).join('/');
+        if (!dir) dir = `${c.n}/${d.n}/${g.n}`;
+        if (g.l?.length) out.links.set(dir, g.l.map((l) => ({ titulo: l.t, url: l.h })));
+      }
+  return out;
+}
+
+const PLAYER_SOURCES = {
+  css: '../player/player.css',
+  merge: '../player/merge.js',
+  js: '../player/player.js',
+  pdf: '../../vendor/pdfjs/pdf.min.js',
+  worker: '../../vendor/pdfjs/pdf.worker.min.js',
+};
+
+let assetsPromise = null;
+
+/** Carrega o player e o pdf.js (na extensão via fetch; nos testes, do disco). */
+export function loadPlayerAssets() {
+  assetsPromise ??= (async () => {
+    const read = async (rel) => {
+      const url = new URL(rel, import.meta.url);
+      if (url.protocol === 'file:') {
+        const fs = await import('node:fs/promises');
+        return new Uint8Array(await fs.readFile(url));
+      }
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`Não consegui ler ${rel} (${r.status})`);
+      return new Uint8Array(await r.arrayBuffer());
+    };
+    const [css, merge, js, pdf, worker] = await Promise.all(Object.values(PLAYER_SOURCES).map(read));
+    const dec = new TextDecoder();
+    return {
+      css: dec.decode(css),
+      merge: dec.decode(merge),
+      js: dec.decode(js),
+      files: [
+        { path: `${STORAGE_DIR}/app/pdf.min.js`, bytes: pdf },
+        { path: `${STORAGE_DIR}/app/pdf.worker.min.js`, bytes: worker },
+        { path: `${STORAGE_DIR}/LEIA-ME.txt`, bytes: new TextEncoder().encode(STORAGE_README) },
+      ],
+    };
+  })().catch((err) => {
+    assetsPromise = null;
+    throw err;
+  });
+  return assetsPromise;
 }

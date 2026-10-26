@@ -4,7 +4,7 @@
 //   - DirectoryTarget: pasta organizada; arquivos que já existem com o mesmo tamanho são pulados,
 //     então rodar de novo só baixa o que falta.
 
-import { buildOfflineIndex } from './offline-index.js';
+import { buildOfflineIndex, loadPlayerAssets, readPlayerData, STORAGE_DIR } from './offline-index.js';
 import { ZipWriter } from './zip.js';
 
 export const INDEX_FILE = 'Assistir aulas.html';
@@ -518,9 +518,24 @@ function failureReport(items) {
   return encoder.encode(lines.join('\r\n'));
 }
 
-function indexBytes(index, items) {
+function indexBytes(index, items, assets) {
   const ok = new Set(items.filter((i) => i.status === 'done' || i.status === 'skipped').map((i) => i.path));
-  return encoder.encode(buildOfflineIndex(index, { isOk: (e) => ok.has(e.path) }));
+  return encoder.encode(buildOfflineIndex(index, { isOk: (e) => ok.has(e.path), assets }));
+}
+
+async function writeAt(base, path, bytes) {
+  const parts = path.split('/');
+  let dir = base;
+  for (const name of parts.slice(0, -1)) dir = await dir.getDirectoryHandle(name, { create: true });
+  const stream = await (await dir.getFileHandle(parts.at(-1), { create: true })).createWritable({ keepExistingData: false });
+  await stream.write(bytes);
+  await stream.close();
+}
+
+/** Grava a página "Assistir aulas" e os arquivos de apoio (pdf.js em %storage%/app). Os dados do aluno em %storage% não são tocados. */
+async function writePlayer(base, html, assets) {
+  for (const f of assets.files) await writeAt(base, f.path, f.bytes);
+  await writeAt(base, INDEX_FILE, html);
 }
 
 const SUBFOLDER_KIND = { Áudio: 'audio', Libras: 'libras', Materiais: 'material' };
@@ -529,7 +544,7 @@ const byName = (a, b) => a.name.localeCompare(b.name, 'pt-BR', { numeric: true }
 async function listDir(handle) {
   const out = [];
   for await (const [name, h] of handle.entries()) {
-    if (name.startsWith('.') || name.endsWith('.crswap')) continue;
+    if (name.startsWith('.') || name.endsWith('.crswap') || name === STORAGE_DIR) continue;
     out.push({ name, handle: h, kind: h.kind });
   }
   return out.sort(byName);
@@ -537,10 +552,19 @@ async function listDir(handle) {
 
 const titleFromFile = (name) => name.replace(/\.[^.]+$/, '').replace(/^\d{2,3} - /, '');
 
-/** Monta o índice a partir dos arquivos que existem de fato: Curso/Disciplina/Aula/arquivos. */
-export async function scanTree(base, currentIndex = []) {
-  const links = new Map();
-  for (const c of currentIndex) for (const d of c.disciplinas) for (const g of d.grupos) if (g.dir && g.links?.length) links.set(g.dir, g.links);
+/**
+ * Monta o índice a partir dos arquivos que existem de fato: Curso/Disciplina/Aula/arquivos.
+ * Links e URLs do YouTube não ficam no disco: vêm do índice atual ou da página gerada antes (`previous`).
+ */
+export async function scanTree(base, currentIndex = [], previous = null) {
+  const links = new Map(previous?.links || []);
+  const urls = new Map(previous?.urls || []);
+  for (const c of currentIndex)
+    for (const d of c.disciplinas)
+      for (const g of d.grupos) {
+        if (g.dir && g.links?.length) links.set(g.dir, g.links);
+        for (const e of g.itens || []) if (e.kind === 'youtube' && e.url) urls.set(e.path, e.url);
+      }
 
   const cursos = [];
   for (const c of (await listDir(base)).filter((x) => x.kind === 'directory')) {
@@ -555,7 +579,8 @@ export async function scanTree(base, currentIndex = []) {
           if (f.kind === 'file') {
             const completo = /^00 - Aula completa\./.test(f.name);
             if (/^YouTube - /.test(f.name)) {
-              grupo.itens.push({ path: `${dir}/${f.name}`, titulo: titleFromFile(f.name).replace(/^YouTube - /, ''), kind: 'youtube' });
+              const path = `${dir}/${f.name}`;
+              grupo.itens.push({ path, titulo: titleFromFile(f.name).replace(/^YouTube - /, ''), kind: 'youtube', ...(urls.has(path) ? { url: urls.get(path) } : {}) });
               continue;
             }
             grupo.itens.push({ path: `${dir}/${f.name}`, titulo: completo ? 'Aula completa' : titleFromFile(f.name), kind: completo ? 'completo' : /\.(mp3|m4a)$/i.test(f.name) ? 'audio' : /\.(mp4|m4v|webm|mov)$/i.test(f.name) ? 'video' : 'material' });
@@ -592,6 +617,8 @@ export class ZipTarget {
   }
 
   async begin(items) {
+    // O player vai junto no fim: se não carregar, melhor falhar antes de baixar tudo.
+    this.assets = await loadPlayerAssets();
     this.stream = await this.fileHandle.createWritable({ keepExistingData: false });
     this.zip = new ZipWriter({ write: (pos, data) => this.write(pos, data) });
     for (const it of items) if (it.size != null) it.zipEntry = this.zip.reserve(it.path, it.size);
@@ -629,7 +656,9 @@ export class ZipTarget {
   }
 
   async finish(items) {
-    await this.zip.appendBytes(INDEX_FILE, indexBytes(this.index, items));
+    const assets = this.assets || (await loadPlayerAssets());
+    for (const f of assets.files) await this.zip.appendBytes(f.path, f.bytes);
+    await this.zip.appendBytes(INDEX_FILE, indexBytes(this.index, items, assets));
     const report = failureReport(items);
     if (report) await this.zip.appendBytes(REPORT_FILE, report);
     const end = await this.zip.finish();
@@ -657,6 +686,7 @@ export class DirectoryTarget {
   }
 
   async begin() {
+    this.assets = await loadPlayerAssets();
     this.base = this.folderName ? await this.root.getDirectoryHandle(this.folderName, { create: true }) : this.root;
     this.dirs.set('', Promise.resolve(this.base));
   }
@@ -731,17 +761,57 @@ export class DirectoryTarget {
 
   async finish(items) {
     // O índice reflete tudo o que está na pasta, inclusive o que foi baixado em outras vezes.
+    // Links e URLs do YouTube de downloads anteriores vêm da página que já estava na pasta.
     let index;
     try {
-      index = await scanTree(this.base, this.index);
+      const old = await this.base.getFileHandle(INDEX_FILE).then((h) => h.getFile()).then((f) => f.text()).catch(() => null);
+      index = await scanTree(this.base, this.index, old ? readPlayerData(old) : null);
     } catch {
       index = null;
     }
-    await this.writeFile(INDEX_FILE, index ? encoder.encode(buildOfflineIndex(index)) : indexBytes(this.index, items));
+    const assets = this.assets || (await loadPlayerAssets());
+    await writePlayer(this.base, index ? encoder.encode(buildOfflineIndex(index, { assets })) : indexBytes(this.index, items, assets), assets);
     const report = failureReport(items);
     if (report) await this.writeFile(REPORT_FILE, report);
     else await this.base.removeEntry(REPORT_FILE).catch(() => {});
   }
 
   async cancel() {}
+}
+
+async function hasFile(dir, name) {
+  try {
+    await dir.getFileHandle(name);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Atualiza só a página "Assistir aulas" de uma pasta já baixada (sem baixar nada).
+ * Aceita a própria pasta das aulas ou a pasta onde ela está ("Aulas Uninter" dentro).
+ */
+export async function rebuildPlayerPage(picked) {
+  let base = picked;
+  if (!(await hasFile(base, INDEX_FILE))) {
+    const inner = await picked.getDirectoryHandle(FOLDER_NAME).catch(() => null);
+    if (!inner || !(await hasFile(inner, INDEX_FILE))) {
+      throw new Error(`Esta pasta não tem o arquivo “${INDEX_FILE}”. Escolha a pasta das aulas (por exemplo, “${FOLDER_NAME}”).`);
+    }
+    base = inner;
+  }
+  let previous = null;
+  try {
+    previous = readPlayerData(await (await (await base.getFileHandle(INDEX_FILE)).getFile()).text());
+  } catch {
+    previous = null;
+  }
+  const index = await scanTree(base, [], previous);
+  if (!index.length) throw new Error('Não encontrei aulas baixadas nesta pasta.');
+  const assets = await loadPlayerAssets();
+  await writePlayer(base, encoder.encode(buildOfflineIndex(index, { assets })), assets);
+  let files = 0;
+  for (const c of index) for (const d of c.disciplinas) for (const g of d.grupos) files += g.itens.length;
+  return { folder: base.name, files };
 }

@@ -130,7 +130,8 @@ function memoryFile(name) {
     name,
     data: new Uint8Array(0),
     async getFile() {
-      return { size: file.data.length };
+      const data = file.data;
+      return { size: data.length, text: async () => new TextDecoder().decode(data), arrayBuffer: async () => data.slice().buffer };
     },
     async createWritable() {
       let buf = [];

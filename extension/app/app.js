@@ -1,5 +1,5 @@
 import { audioUrlFor, librasUrlFor, loadCatalog, STATUS_LABEL } from './lib/catalog.js';
-import { describeError, DirectoryTarget, DownloadJob, FOLDER_NAME, INDEX_FILE, probeSize, ZipTarget } from './lib/downloader.js';
+import { describeError, DirectoryTarget, DownloadJob, FOLDER_NAME, INDEX_FILE, probeSize, rebuildPlayerPage, ZipTarget } from './lib/downloader.js';
 import { icon } from './lib/icons.js';
 import { fold, prettyCase, safeName } from './lib/naming.js';
 import { buildPlan, DEFAULT_TYPES, gruposDe, summarize, usaCompleta, usaTemas } from './lib/plan.js';
@@ -1569,6 +1569,33 @@ for (const cb of $$('[data-extra]')) {
     sync();
   };
 }
+// Atualiza só "Assistir aulas.html" (e o leitor em %storage%/app) numa pasta já baixada, sem baixar nada.
+$('#btn-rebuild').onclick = async () => {
+  if (!('showDirectoryPicker' in window)) {
+    toast('Este navegador não permite escolher pastas. Use o Google Chrome ou o Microsoft Edge atualizados.');
+    return;
+  }
+  let handle;
+  try {
+    handle = await window.showDirectoryPicker({ id: 'ava-pasta', mode: 'readwrite', startIn: 'downloads' });
+  } catch (err) {
+    if (err?.name !== 'AbortError') toast(describeError(err));
+    return;
+  }
+  // O aviso (toast) não aparece por cima de um diálogo aberto.
+  $('#settings').close();
+  toast('Atualizando a página…');
+  const btn = $('#btn-rebuild');
+  btn.disabled = true;
+  try {
+    const r = await rebuildPlayerPage(handle);
+    toast(`Pronto! Abra “${INDEX_FILE}” na pasta ${r.folder} (${plural(r.files, 'arquivo', 'arquivos')}).`, 7000);
+  } catch (err) {
+    toast(describeError(err), 7000);
+  } finally {
+    btn.disabled = false;
+  }
+};
 $('#opt-concurrency').onchange = (e) => {
   prefs.concurrency = Number(e.target.value) || 4;
   savePrefs();

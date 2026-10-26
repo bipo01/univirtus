@@ -141,18 +141,20 @@ function nodeTempStore() {
     async create() {
       const file = path.join(tmp, `t-${Math.random().toString(36).slice(2)}.mp4`);
       const fd = fs.openSync(file, 'w');
+      // Fechar duas vezes fecharia o descritor que outro código reaproveitou com o mesmo número.
+      let open = true;
+      const close = () => {
+        if (open) fs.closeSync(fd);
+        open = false;
+      };
       return {
         sink: { write: async (pos, data) => void fs.writeSync(fd, data, 0, data.length, pos) },
         async finish() {
-          fs.closeSync(fd);
+          close();
           return fs.openAsBlob(file);
         },
         async remove() {
-          try {
-            fs.closeSync(fd);
-          } catch {
-            /* já fechado */
-          }
+          close();
           fs.rmSync(file, { force: true });
         },
       };

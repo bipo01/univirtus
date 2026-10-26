@@ -61,6 +61,7 @@ test('ZIP: downloads paralelos, queda de conexão no meio é retomada com Range'
   assert.equal(z.bad, null);
   for (const e of entries) assert.equal(z.files[e.path], await sha1(m.get(e.url)));
   assert.ok(INDEX_FILE in z.files);
+  assert.ok('%storage%/app/pdf.min.js' in z.files && '%storage%/app/pdf.worker.min.js' in z.files, 'leitor de PDF dentro do ZIP');
   assert.ok(!(REPORT_FILE in z.files));
 });
 
@@ -153,7 +154,10 @@ test('Pasta: grava organizado, pula o que já existe e o índice lista tudo o qu
   assert.deepEqual([...aula.children.keys()].sort(), entries.map((e) => e.path.split('/').pop()).sort());
   assert.deepEqual(aula.children.get('03 - Tema 3.mp4').data, m.get(U(3)));
   const html = new TextDecoder().decode(root.children.get('Aulas Uninter').children.get(INDEX_FILE).data);
-  for (let i = 1; i <= 3; i++) assert.ok(html.includes(encodeURIComponent(`0${i} - Tema ${i}.mp4`)), `índice tem o tema ${i}`);
+  for (let i = 1; i <= 3; i++) assert.ok(html.includes(`0${i} - Tema ${i}.mp4`), `índice tem o tema ${i}`);
+  const storage = root.children.get('Aulas Uninter').children.get('%storage%');
+  assert.ok(storage.children.get('app').children.get('pdf.min.js').data.length > 100_000, 'leitor de PDF vai junto');
+  assert.ok(storage.children.get('app').children.has('pdf.worker.min.js'));
 });
 
 test('Pasta: falha definitiva não deixa arquivo vazio para trás', async () => {

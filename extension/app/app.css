@@ -1302,6 +1302,11 @@ dialog h2 {
   font-size: 13px;
   margin: 8px 0 0;
 }
+.settings-sep {
+  height: 1px;
+  background: var(--line);
+  margin: 20px 0 16px;
+}
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

@@ -8,6 +8,8 @@ Extensão Chrome MV3 que baixa em lote as videoaulas e materiais do AVA Univirtu
   - `background.js` — abre/foca a página `app/app.html?tab=<aba do AVA>`.
   - `content/content.js` — roda no AVA: ponte `ava:api`/`ava:ping` e botão flutuante (Shadow DOM).
   - `app/` — interface (`app.html/css/js`) e núcleo em `app/lib/` (testável em Node).
+  - `app/player/` — player offline (`player.js` + `player.css`) que o `offline-index.js` embute em "Assistir aulas.html".
+  - `vendor/pdfjs/` — pdf.js 3.11.174 (build legado UMD, Apache-2.0), copiado para `%storage%/app/` junto com a página.
 - `tests/*.test.mjs` — `node:test`. `tests/helpers.mjs` simula CDN (HEAD/Range/falhas) e FileSystem handles.
 - `tools/preview/` — preview da interface com `chrome.*` simulado e dados **fictícios**; `tools/make-icons.py` gera os PNGs.
 
@@ -15,6 +17,7 @@ Extensão Chrome MV3 que baixa em lote as videoaulas e materiais do AVA Univirtu
 - `npm test` — todos os testes (um deles cria um ZIP esparso > 4 GB; `SKIP_BIG=1` pula).
 - `npm run preview` → `http://127.0.0.1:8765/app/preview.html` (`?logged=0` mostra a tela de login). Os seletores de arquivo gravam no OPFS; `window.__exportOpfs(nome)` manda o resultado para `/tmp/ava-preview-*`.
 - `npm run icons` — regenera `extension/icons/*.png`.
+- `node tools/preview/player-sample.mjs` → pasta fictícia em `tools/preview/out/player-sample/Aulas Uninter` (vídeos de 4 s, PDFs com texto) com a página gerada; abra no Chrome por `file://`.
 - Validar ZIP: `python3 -I -c "import zipfile,sys;print(zipfile.ZipFile(sys.argv[1]).testzip())" arq.zip`, `unzip -tq`, `ditto -x -k` (o `unzip` do macOS não entende nomes UTF-8; use `ditto` para extrair).
 
 ## API do AVA (verificada em out/2026)
@@ -41,3 +44,11 @@ Base `https://univirtus.uninter.com/ava/`. Autenticação: **cookie de sessão +
 - Download interrompido (`lib/resume.js`): lista, destino (handle) e progresso ficam no IndexedDB `ava-downloader` enquanto baixa; cada download segura a trava `ava-job-<id>`, então só registro sem trava é oferecido ao abrir. O registro é apagado quando o download termina na página (pronto, cancelado ou erro). Pasta retoma pulando o que já existe; ZIP recomeça (o Chrome só grava o arquivo no `close()`).
 - Erros nunca viram sucesso silencioso: 401 → tela de login; falhas por arquivo aparecem na interface e no relatório.
 - Não faça chamadas em massa sem limite ao AVA: a página limita a 10 simultâneas.
+
+## Página "Assistir aulas.html" (player offline)
+- Abre por `file://` (duplo clique), sem internet e sem módulos ES (o Chrome bloqueia `type=module` e `fetch` em `file://`). Os dados vão em `<script type="application/json" id="ava-data">` (`playerData`: caminho real `p` é a chave de tudo); o player é um script clássico. Nada de `</script` no `player.js` (há teste).
+- Progresso, destaques e notas: `localStorage` (`ava-player:<pasta>`) sempre; e `%storage%/dados.json` na pasta das aulas depois que o aluno escolhe a pasta (`showDirectoryPicker`; o handle fica no IndexedDB `ava-player`, e o Chrome pede permissão de novo a cada visita). Gravação junta com o disco antes (registros com `at`, apagados viram lápide `del`) e gera `%storage%/Minhas anotações.md`.
+- PDF: só com a pasta conectada (é o único jeito de ler os bytes em `file://`). pdf.js carrega de `%storage%/app/pdf.min.js` por `<script>`; o worker vem de um Blob lido pela pasta (se falhar, o pdf.js roda na página). Sempre `isEvalSupported: false` (CVE-2024-4367). Destaques guardam retângulos normalizados (0–1) por página.
+- Outros materiais (docx, pptx…) não têm link: clicar num `file://` não renderizável faz o Chrome baixar uma cópia. A página mostra o caminho para abrir pelo sistema.
+- `%storage%` é ignorado pelo `scanTree`. A extensão nunca apaga nem sobrescreve `dados.json`; só reescreve a página, `%storage%/app/*` e `LEIA-ME.txt`.
+- "Atualizar numa pasta já baixada" (Mais opções → `rebuildPlayerPage`): regera só a página a partir dos arquivos; links e URLs do YouTube saem da página anterior (`readPlayerData` lê o formato novo e o antigo `const DATA=`).

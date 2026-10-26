@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { audioUrlFor, librasUrlFor, loadCatalog, parseRota, rotaSourceUrl, statusOf } from '../extension/app/lib/catalog.js';
 import { buildPlan, DEFAULT_TYPES, leafKeys, materialFileName } from '../extension/app/lib/plan.js';
 import { createUniquer, prettyCase, safeName } from '../extension/app/lib/naming.js';
-import { buildOfflineIndex } from '../extension/app/lib/offline-index.js';
+import { buildOfflineIndex, loadPlayerAssets } from '../extension/app/lib/offline-index.js';
 
 const NOW = Date.parse('2026-10-25T12:00:00Z');
 
@@ -192,9 +192,12 @@ test('plano: pastas organizadas por curso/disciplina/aula, tipos e índice offli
   const so = buildPlan(cat, { selected: new Set([rel.aulas[1].completos[0].key]), types: { ...DEFAULT_TYPES, video: false, completo: true } });
   assert.deepEqual(so.entries.map((e) => e.path.split('/').slice(-1)[0]), ['00 - Aula completa.mp4']);
 
-  const html = buildOfflineIndex(plan.index);
+  const html = buildOfflineIndex(plan.index, { assets: await loadPlayerAssets() });
   assert.ok(html.includes('Conversa Inicial'));
-  assert.ok(!html.includes('</script><'), 'JSON embutido sem quebrar o <script>');
+  assert.equal(html.match(/<\/script>/g).length, 3, 'só fecha os três <script> da página (tema, dados, player)');
+  const data = JSON.parse(/<script type="application\/json" id="ava-data">([\s\S]*?)<\/script>/.exec(html)[1]);
+  assert.equal(data.storage, '%storage%');
+  assert.ok(data.cursos[0].d[0].g[0].i.some((i) => i.p === `${base}/01 - Conversa Inicial.mp4`), 'caminho real (sem codificar) é a chave do progresso');
 });
 
 test('nome de material: evita repetir o título quando o arquivo já tem o mesmo nome', () => {
